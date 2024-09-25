@@ -1,0 +1,180 @@
+cmake_minimum_required(VERSION 3.22)
+project(nat-lb C)
+
+set(CMAKE_CXX_STANDARD 11)
+
+set(WERROR_FLAGS
+        -W
+        -Wall
+        -Wstrict-prototypes
+        -Wmissing-prototypes
+        -Wmissing-declarations
+        -Wold-style-definition
+        -Wpointer-arith
+        -Wcast-align
+        -Wnested-externs
+        -Wcast-qual
+        -Wformat-nonliteral
+        -Wformat-security
+        -Wundef
+        -Wwrite-strings
+        -Wdeprecated
+        -Winvalid-pch
+        -Wextra
+        -Wdeprecated
+        -Wformat
+        -Wformat-nonliteral
+        -Wformat-security
+        -Wmissing-declarations
+        -Wmissing-prototypes
+        -Wnested-externs
+        -Wold-style-definition
+        -Wpointer-arith
+        -Wsign-compare
+        -Wstrict-prototypes
+        -Wundef
+        -Wwrite-strings
+        -Wno-address-of-packed-member
+        -Wno-packed-not-aligned
+        -Wno-missing-field-initializers
+        -Wno-zero-length-bounds
+        -Wno-format-truncation
+)
+
+set(CFLAGS
+        -m64
+        -pthread
+        -march=native
+        -include /usr/local/include/rte_config.h
+        -O0
+        ${WERROR_FLAGS}
+        -g
+)
+
+set(DPDKLIBS
+        -Wl,--whole-archive
+        #        dpdk
+        rte_acl
+        rte_bbdev
+        rte_bitratestats
+        rte_bpf
+        rte_bus_dpaa
+        rte_bus_fslmc
+        rte_bus_ifpga
+        rte_bus_pci
+        rte_bus_vdev
+        rte_bus_vmbus
+        rte_cfgfile
+        rte_cmdline
+        rte_common_cpt
+        rte_common_dpaax
+        rte_common_octeontx
+        rte_compressdev
+        rte_cryptodev
+        rte_distributor
+        rte_eal
+        rte_efd
+        rte_ethdev
+        rte_eventdev
+        rte_fib
+        rte_gro
+        rte_gso
+        rte_hash
+        rte_ip_frag
+        rte_ipsec
+        rte_jobstats
+        rte_kvargs
+        rte_latencystats
+        rte_lpm
+        rte_mbuf
+        rte_member
+        rte_mempool
+        rte_mempool_bucket
+        rte_mempool_dpaa2
+        rte_mempool_dpaa
+        rte_mempool_octeontx
+        rte_mempool_ring
+        rte_mempool_stack
+        rte_meter
+        rte_metrics
+        rte_net
+        rte_pci
+        rte_pdump
+        rte_pipeline
+        rte_port
+        rte_power
+        rte_rawdev
+        rte_reorder
+        rte_ring
+        rte_sched
+        rte_security
+        rte_table
+        rte_timer
+        rte_vhost
+        -Wl,--no-whole-archive)
+
+add_definitions(
+        -DRTE_MACHINE_CPUFLAG_SSE
+        -DRTE_MACHINE_CPUFLAG_SSE2
+        -DRTE_MACHINE_CPUFLAG_SSE3
+        -DRTE_MACHINE_CPUFLAG_SSSE3
+        -DRTE_MACHINE_CPUFLAG_SSE4_1
+        -DRTE_MACHINE_CPUFLAG_SSE4_2
+        -DRTE_MACHINE_CPUFLAG_AES
+        -DRTE_MACHINE_CPUFLAG_PCLMULQDQ
+        -DRTE_MACHINE_CPUFLAG_AVX
+        -DRTE_MACHINE_CPUFLAG_RDRAND
+        -DRTE_MACHINE_CPUFLAG_FSGSBASE
+        -DRTE_MACHINE_CPUFLAG_F16C
+        -DRTE_MACHINE_CPUFLAG_AVX2
+        -D_FILE_OFFSET_BITS=64
+        -DALLOW_EXPERIMENTAL_API
+        -D_GNU_SOURCE)
+
+add_compile_options(${CFLAGS})
+
+include_directories(/usr/local/include)
+
+link_directories(/usr/local/lib64)
+
+link_libraries(
+        ${DPDKLIBS}
+        pthread
+        rt
+        dl
+        m
+        pcap)
+
+add_executable(nat-lb main.c
+        dev.h
+        dev.c
+        list.h
+        lcore.h
+        common.h
+        lcore.c
+        l2.h
+        l2.c
+        scheduler.h
+        scheduler.c
+        route.h
+        route.c
+        flow.h
+        ipv4_in.h
+        ipv4_in.c
+        ipv4_out.h
+        ipv4_forward.h
+        ipv4_forward.c
+        neigh.h
+        neigh.c
+        ipv4_out.c
+        common.c
+        icmp.h
+        icmp.c
+        inet.c
+        inet.h
+        acl.h
+        acl.c
+        arp.h
+        arp.c
+        ct.h
+        ct.c)
