@@ -8,15 +8,16 @@
 #include <rte_mbuf.h>
 #include "list.h"
 #include "dev.h"
+#include "skb.h"
 
 struct pkt_type {
     uint16_t type;
-    int (*func) (struct rte_mbuf *mbuf, struct dev_port *port);
+    int (*func) (sk_buff_t *skb);
     struct list_head pkt_type_node;
 } __rte_cache_aligned;
 
 void l2_init(void);
 int pkt_type_register(struct pkt_type *pkt_type);
-int l2_rcv(uint16_t lcore_id, struct rte_mbuf *mbuf);
+int l2_rcv(sk_buff_t *skb);
 
 #endif //NAT_LB_L2_H

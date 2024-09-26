@@ -40,9 +40,6 @@
 					<Add option="-D_FILE_OFFSET_BITS=64"/>
 					<Add option="-DALLOW_EXPERIMENTAL_API"/>
 					<Add option="-D_GNU_SOURCE"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12/x86_64-OpenCloudOS-linux"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12/backward"/>
 					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/include"/>
 					<Add directory="/usr/local/include"/>
 					<Add directory="/usr/include"/>
@@ -77,9 +74,6 @@
 					<Add option="-D_FILE_OFFSET_BITS=64"/>
 					<Add option="-DALLOW_EXPERIMENTAL_API"/>
 					<Add option="-D_GNU_SOURCE"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12/x86_64-OpenCloudOS-linux"/>
-					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/../../../../include/c++/12/backward"/>
 					<Add directory="/usr/lib/gcc/x86_64-OpenCloudOS-linux/12/include"/>
 					<Add directory="/usr/local/include"/>
 					<Add directory="/usr/include"/>
@@ -209,6 +203,12 @@
 			<Option target="nat-lb"/>
 		</Unit>
 		<Unit filename="/tmp/tmp.LZc1sNpGQN/scheduler.h">
+			<Option target="nat-lb"/>
+		</Unit>
+		<Unit filename="/tmp/tmp.LZc1sNpGQN/skb.c">
+			<Option target="nat-lb"/>
+		</Unit>
+		<Unit filename="/tmp/tmp.LZc1sNpGQN/skb.h">
 			<Option target="nat-lb"/>
 		</Unit>
 		<Unit filename="/tmp/tmp.LZc1sNpGQN/CMakeLists.txt">

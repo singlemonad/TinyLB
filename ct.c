@@ -10,6 +10,29 @@
 
 #define MAX_CT_BUCKETS 512
 
+static const uint8_t tcp_ct_state_transfer_map[CT_DRI_COUNT][TCP_BIT_MAX][TCP_CT_MAX] = {
+/* original */
+        {
+                /* sNO、sSS、sSR、sES、sFW、sCW、sLA、sTM、sCL、sS2 */
+/* SYN */       {sSS, sSS, sSR, sES, sFW, sCW, sLA, sSS, sSS, sS2},
+/* SYNACK */    {sNO, },
+/* FIN */       {},
+/* ACK */       {},
+/* RST */       {},
+/* NONE*/       {}
+        },
+
+/* reply */
+        {
+/* SYN */       {},
+/* SYNACK */    {},
+/* FIN */       {},
+/* ACK */       {},
+/* RST*/        {},
+/* none */      {}
+        }
+};
+
 static struct list_head g_ct_table[MAX_CT_BUCKETS];
 
 static struct ct_session* ct_alloc(void) {
@@ -23,13 +46,13 @@ static struct ct_session* ct_alloc(void) {
     return ct;
 }
 
-static struct ct_tuple ct_pkt_to_tuple(struct rte_mbuf *mbuf, bool reverse) {
+static struct ct_tuple ct_pkt_to_tuple(sk_buff_t *skb, bool reverse) {
     struct rte_ipv4_hdr *iph;
     struct rte_icmp_hdr *icmp;
     struct ct_tuple tuple;
     uint16_t *ports;
 
-    iph = rte_pktmbuf_mtod(mbuf, struct rte_ipv4_hdr*);
+    iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
 
     if (!reverse) {
         tuple.src_addr = iph->src_addr;
@@ -60,9 +83,9 @@ static struct ct_tuple ct_pkt_to_tuple(struct rte_mbuf *mbuf, bool reverse) {
     return tuple;
 }
 
-static void ct_fill_tuple(struct rte_mbuf *mbuf, struct ct_session *ct) {
-    ct->tuple_hash[CT_DRI_ORIGINAL].tuple = ct_pkt_to_tuple(mbuf, false);
-    ct->tuple_hash[CT_DRI_REPLY].tuple = ct_pkt_to_tuple(mbuf, true);
+static void ct_fill_tuple(sk_buff_t *skb, struct ct_session *ct) {
+    ct->tuple_hash[CT_DRI_ORIGINAL].tuple = ct_pkt_to_tuple(skb, false);
+    ct->tuple_hash[CT_DRI_REPLY].tuple = ct_pkt_to_tuple(skb, true);
 }
 
 static uint32_t ct_get_tuple_hash(struct ct_tuple tuple) {
@@ -79,7 +102,7 @@ static void ct_insert(struct ct_session *ct) {
     list_add(&ct->tuple_hash[CT_DRI_REPLY].tuple_node, &g_ct_table[reply_hash]);
 }
 
-struct ct_session* ct_new(struct rte_mbuf *mbuf) {
+struct ct_session* ct_new(sk_buff_t *skb) {
     struct ct_session *ct;
 
     ct = ct_alloc();
@@ -87,26 +110,26 @@ struct ct_session* ct_new(struct rte_mbuf *mbuf) {
         return NULL;
     }
 
-    ct_fill_tuple(mbuf, ct);
+    ct_fill_tuple(skb, ct);
     ct->rt_entry = NULL;
     ct_insert(ct);
 
     return ct;
 }
 
-struct ct_session* ct_find(struct rte_mbuf *mbuf) {
+struct ct_session* ct_find(sk_buff_t *skb) {
     struct ct_tuple tuple;
     uint32_t hash;
     struct ct_tuple_hash *tuple_hash;
     struct ct_session *ct;
     struct rte_ipv4_hdr *iph;
 
-    tuple = ct_pkt_to_tuple(mbuf, false);
+    tuple = ct_pkt_to_tuple(skb, false);
     hash = ct_get_tuple_hash(tuple);
     list_for_each_entry(tuple_hash, &g_ct_table[hash], tuple_node) {
         if (tuple_hash->tuple.src_addr == tuple.src_addr &&
         tuple_hash->tuple.dst_addr == tuple.dst_addr) {
-            iph = rte_pktmbuf_mtod(mbuf, struct rte_ipv4_hdr*);
+            iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
             if (IPPROTO_ICMP == iph->next_proto_id) {
                 if (tuple_hash->tuple.icmp.type == tuple.icmp.type &&
                 tuple_hash->tuple.icmp.code == tuple.icmp.code) {

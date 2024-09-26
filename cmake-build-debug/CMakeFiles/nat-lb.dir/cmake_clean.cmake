@@ -31,6 +31,8 @@ file(REMOVE_RECURSE
   "CMakeFiles/nat-lb.dir/route.c.o.d"
   "CMakeFiles/nat-lb.dir/scheduler.c.o"
   "CMakeFiles/nat-lb.dir/scheduler.c.o.d"
+  "CMakeFiles/nat-lb.dir/skb.c.o"
+  "CMakeFiles/nat-lb.dir/skb.c.o.d"
   "nat-lb"
   "nat-lb.pdb"
 )

@@ -513,6 +513,30 @@ scheduler.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/nat-lb.dir/build.make CMakeFiles/nat-lb.dir/scheduler.c.s
 .PHONY : scheduler.c.s
 
+skb.o: skb.c.o
+.PHONY : skb.o
+
+# target to build an object file
+skb.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/nat-lb.dir/build.make CMakeFiles/nat-lb.dir/skb.c.o
+.PHONY : skb.c.o
+
+skb.i: skb.c.i
+.PHONY : skb.i
+
+# target to preprocess a source file
+skb.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/nat-lb.dir/build.make CMakeFiles/nat-lb.dir/skb.c.i
+.PHONY : skb.c.i
+
+skb.s: skb.c.s
+.PHONY : skb.s
+
+# target to generate assembly for a file
+skb.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/nat-lb.dir/build.make CMakeFiles/nat-lb.dir/skb.c.s
+.PHONY : skb.c.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -570,6 +594,9 @@ help:
 	@echo "... scheduler.o"
 	@echo "... scheduler.i"
 	@echo "... scheduler.s"
+	@echo "... skb.o"
+	@echo "... skb.i"
+	@echo "... skb.s"
 .PHONY : help
 
 

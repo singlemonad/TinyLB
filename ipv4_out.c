@@ -8,13 +8,18 @@
 #include "inet.h"
 #include "neigh.h"
 
-int ipv4_output(struct rte_mbuf* mbuf, struct route_entry *rt_entry) {
+int ipv4_output(sk_buff_t *skb) {
     uint32_t next_hop;
     struct rte_ipv4_hdr *iph;
 
-    iph = rte_pktmbuf_mtod(mbuf, struct rte_ipv4_hdr*);
-    if (rt_entry->gw != 0) {
-        next_hop = rt_entry->gw;
+    if (NULL == skb->rt_entry) {
+        fprintf(stderr, "No route.\n");
+        goto drop;
+    }
+
+    iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+    if (skb->rt_entry->gw != 0) {
+        next_hop = skb->rt_entry->gw;
     } else {
         next_hop = iph->dst_addr;
     }
@@ -22,13 +27,17 @@ int ipv4_output(struct rte_mbuf* mbuf, struct route_entry *rt_entry) {
     iph->hdr_checksum = 0;
     iph->hdr_checksum = rte_ipv4_cksum(iph);
 
-    mbuf->packet_type = RTE_ETHER_TYPE_IPV4;
-    mbuf->port = rt_entry->port->port_id;
+    skb->mbuf.packet_type = RTE_ETHER_TYPE_IPV4;
+    skb->mbuf.port = skb->rt_entry->port->port_id;
 
-    return neigh_output(next_hop, mbuf, rt_entry->port);
+    return neigh_output(next_hop, skb, skb->rt_entry->port);
+
+drop:
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
+    return NAT_LB_OK;
 }
 
-int ipv4_xmit(struct rte_mbuf *mbuf, struct flow4 *fl4) {
+int ipv4_xmit(sk_buff_t *skb, struct flow4 *fl4) {
     struct rte_ipv4_hdr *iph;
     struct route_entry *rt_entry;
 
@@ -37,9 +46,10 @@ int ipv4_xmit(struct rte_mbuf *mbuf, struct flow4 *fl4) {
     if (NULL == rt_entry) {
         goto no_route;
     }
+    skb->rt_entry = rt_entry;
     fl4->dst_addr = rte_cpu_to_be_32(fl4->dst_addr);
 
-    iph = (struct rte_ipv4_hdr*)rte_pktmbuf_prepend(mbuf, sizeof(struct rte_ipv4_hdr));
+    iph = (struct rte_ipv4_hdr*)rte_pktmbuf_prepend((struct rte_mbuf*)skb, sizeof(struct rte_ipv4_hdr));
     iph->version_ihl = ((4 << 4) | 5);
     iph->fragment_offset = 0;
     iph->time_to_live = DEFAULT_TIME_LIVE_TTL;
@@ -51,13 +61,13 @@ int ipv4_xmit(struct rte_mbuf *mbuf, struct flow4 *fl4) {
         // TODO select src addr
     }
 
-    return ipv4_output(mbuf, rt_entry);
+    return ipv4_output(skb);
 
 no_route:
     fprintf(stderr, "No route, %s, dst %u.%u.%u.%u.\n",
             __func__, fl4->dst_addr & 0xff, ( fl4->dst_addr>>8) & 0xff, ( fl4->dst_addr>>16) & 0xff, (fl4->dst_addr>>24) & 0xff);
 drop:
-    rte_pktmbuf_free(mbuf);
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
 
     return NAT_LB_OK;
 }

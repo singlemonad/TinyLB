@@ -32,15 +32,15 @@ int pkt_type_register(struct pkt_type *pkt_type) {
     return NAT_LB_OK;
 }
 
-static int l2_deliver_mbuf(struct dev_port *port, uint16_t lcore_id, struct rte_mbuf *mbuf) {
+static int l2_deliver_mbuf(sk_buff_t *skb) {
     struct rte_ether_hdr *eth_hdr;
     struct pkt_type *l3_handler;
 
-    eth_hdr = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr *);
-    mbuf->l2_len = sizeof(struct rte_ether_hdr);
+    eth_hdr = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ether_hdr *);
+    skb->mbuf.l2_len = sizeof(struct rte_ether_hdr);
 
     // remove eth hdr before deliver to l3
-    if (NULL == rte_pktmbuf_adj(mbuf, sizeof(struct rte_ether_hdr))) {
+    if (NULL == rte_pktmbuf_adj((struct rte_mbuf*)skb, sizeof(struct rte_ether_hdr))) {
         goto drop;
     }
 
@@ -49,29 +49,29 @@ static int l2_deliver_mbuf(struct dev_port *port, uint16_t lcore_id, struct rte_
         fprintf(stderr, "No l3 handler for %d.\n", rte_be_to_cpu_16(eth_hdr->ether_type));
         goto drop;
     }
-    return l3_handler->func(mbuf, port);
+    return l3_handler->func(skb);
 
 drop:
-    rte_pktmbuf_free(mbuf);
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
     return NAT_LB_OK;
 }
 
-int l2_rcv(uint16_t lcore_id, struct rte_mbuf *mbuf) {
+int l2_rcv(sk_buff_t *skb) {
     struct dev_port *port;
 
-    if (NULL == mbuf || mbuf->data_len == 0 || mbuf->pkt_len == 0) {
+    if (NULL == skb || skb->mbuf.data_len == 0 || skb->mbuf.pkt_len == 0) {
         fprintf(stderr, "Rcv empty pkt.\n");
         return NAT_LB_OK;
     }
 
-    port = get_port_by_id(mbuf->port);
+    port = get_port_by_id(skb->mbuf.port);
     if (NULL == port) {
-        fprintf(stderr, "No dev_port found %d.", mbuf->port);
-        rte_pktmbuf_free(mbuf);
+        fprintf(stderr, "No dev_port found %d.", skb->mbuf.port);
+        rte_pktmbuf_free((struct rte_mbuf*)skb);
         return NAT_LB_OK;
     }
 
-    return l2_deliver_mbuf(port, lcore_id, mbuf);
+    return l2_deliver_mbuf(skb);
 }
 
 void l2_init(void) {

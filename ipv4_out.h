@@ -8,8 +8,9 @@
 #include <rte_mbuf.h>
 #include "route.h"
 #include "flow.h"
+#include "skb.h"
 
-int ipv4_xmit(struct rte_mbuf *mbuf, struct flow4 *fl4);
-int ipv4_output(struct rte_mbuf *mbuf, struct route_entry *rt_entry);
+int ipv4_xmit(sk_buff_t *skb, struct flow4 *fl4);
+int ipv4_output(sk_buff_t *skb);
 
 #endif //NAT_LB_IPV4_OUT_H

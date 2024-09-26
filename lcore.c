@@ -48,7 +48,7 @@ static void lcore_fwd_loop(void *arg) {
             rx_n = port_rx_burst(port_id, queue_conf->queue_id);
             for (k = 0; k < rx_n; k++) {
 
-                l2_rcv(cid, queue_conf->mbufs[k]);
+                l2_rcv(queue_conf->mbufs[k]);
             }
         }
     }

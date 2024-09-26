@@ -14,8 +14,8 @@
 #define PKT_MBUF_POOL_NB 4096
 #define PKT_MBUF_POOL_CACHE_SIZE 256
 
-// #define SHOW_RX_PKT 0
-// #define SHOW_TX_PKT 0
+#define SHOW_RX_PKT 0
+#define SHOW_TX_PKT 0
 
 static struct rte_eth_conf default_conf = {};
 
@@ -38,12 +38,23 @@ static void pkt_mbuf_pool_init(void) {
     socket_n = rte_socket_count();
     for (i = 0; i < socket_n; i++) {
         snprintf(name, 64, "pkt_mbuf_pool_%d", i);
-        g_pkt_mbuf_pool[i] = rte_pktmbuf_pool_create(name,
+        /*g_pkt_mbuf_pool[i] = rte_pktmbuf_pool_create(name,
                                                 PKT_MBUF_POOL_NB,
                                                 PKT_MBUF_POOL_CACHE_SIZE,
                                                 0,
                                                 RTE_MBUF_DEFAULT_BUF_SIZE,
-                                                (int)i);
+                                                (int)i);*/
+        g_pkt_mbuf_pool[i] = rte_mempool_create(name,
+                                                PKT_MBUF_POOL_NB,
+                                                MBUF_SIZE,
+                                                PKT_MBUF_POOL_CACHE_SIZE,
+                                                sizeof(struct rte_pktmbuf_pool_private),
+                                                rte_pktmbuf_pool_init,
+                                                NULL,
+                                                rte_pktmbuf_init,
+                                                NULL,
+                                                (int)i,
+                                                0);
         if (NULL == g_pkt_mbuf_pool[i]) {
             rte_exit(EXIT_FAILURE, "Create pkt mbuf pool on socket %d failed, %s.",
                      i, rte_strerror(rte_errno));
@@ -79,8 +90,6 @@ static unsigned int port_name_hash(const char *name, size_t len) {
     return hash % PORT_TABLE_BUCKETS;
 }
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wcast-align"
 static int port_register(struct dev_port* port) {
     int hash;
     struct dev_port *curr;
@@ -110,7 +119,6 @@ static int port_register(struct dev_port* port) {
 
     return NAT_LB_OK;
 }
-#pragma clang diagnostic pop
 
 static struct dev_port* port_alloc(uint16_t port_id, struct rte_eth_conf *conf) {
     struct dev_port *port;
@@ -172,32 +180,32 @@ static void port_tx_burst(uint16_t cid, uint16_t port_id, uint16_t qid) {
     }
 #endif
 
-    tx_n = rte_eth_tx_burst(port_id, qid, tx_queue_conf->mbufs, tx_queue_conf->len);
+    tx_n = rte_eth_tx_burst(port_id, qid, (struct rte_mbuf**)tx_queue_conf->mbufs, tx_queue_conf->len);
     if (tx_n < tx_queue_conf->len) {
         do {
-            rte_pktmbuf_free(tx_queue_conf->mbufs[tx_n]);
+            rte_pktmbuf_free((struct rte_mbuf*)tx_queue_conf->mbufs[tx_n]);
         } while (++tx_n < tx_queue_conf->len);
     }
     tx_queue_conf->len = 0;
 }
 
-static uint16_t get_tx_queue_id(struct rte_mbuf *mbuf, struct lcore_port_conf* port_conf) {
-    return (((uint32_t)mbuf->buf_iova) >> 8 ) % port_conf->txq_n;
+static uint16_t get_tx_queue_id(sk_buff_t *skb, struct lcore_port_conf* port_conf) {
+    return (((uint32_t)skb->mbuf.buf_iova) >> 8 ) % port_conf->txq_n;
 }
 
-static int port_hard_xmit(struct rte_mbuf *mbuf, struct dev_port *port) {
+static int port_hard_xmit(sk_buff_t *skb, struct dev_port *port) {
     struct port_ops *ops;
 
-    if (NULL == mbuf || NULL == port) {
-        if (mbuf == NULL) {
-            rte_pktmbuf_free(mbuf);
+    if (NULL == skb || NULL == port) {
+        if (skb == NULL) {
+            rte_pktmbuf_free((struct rte_mbuf*)skb);
         }
         return NAT_LB_INVALID;
     }
 
     ops = port->ops;
     if (NULL != ops && NULL != ops->op_xmit) {
-        return ops->op_xmit(mbuf, port);
+        return ops->op_xmit(skb, port);
     }
 
     uint16_t  cid, qid;
@@ -206,10 +214,10 @@ static int port_hard_xmit(struct rte_mbuf *mbuf, struct dev_port *port) {
 
     cid = rte_lcore_id();
     lcore_port_conf = get_lcore_port_conf(cid, port->port_id);
-    qid = get_tx_queue_id(mbuf, lcore_port_conf);
+    qid = get_tx_queue_id(skb, lcore_port_conf);
 
     tx_queue_conf = get_lcore_tx_queue_conf(cid, port->port_id, qid);
-    tx_queue_conf->mbufs[tx_queue_conf->len] = mbuf;
+    tx_queue_conf->mbufs[tx_queue_conf->len] = skb;
     tx_queue_conf->len += 1;
     port_tx_burst(cid, port->port_id, qid);
 
@@ -307,7 +315,7 @@ static void port_start(struct dev_port *port) {
         rte_exit(EXIT_FAILURE, "Enable promiscuous dev_port %d failed, %s.", port->port_id, rte_strerror(rte_errno));
     }
 
-    fprintf(stdout, "Start dev_port %d success.\n", port->port_id);
+    RTE_LOG(INFO, PORT, "Start dev_port %d success.\n", port->port_id);
 }
 
 void port_start_all(void) {
@@ -318,19 +326,19 @@ void port_start_all(void) {
     }
 }
 
-int port_xmit(struct rte_mbuf *mbuf, struct dev_port *port) {
-    if (NULL == mbuf || NULL == port) {
-        if (mbuf == NULL) {
-            rte_pktmbuf_free(mbuf);
+int port_xmit(sk_buff_t *skb, struct dev_port *port) {
+    if (NULL == skb || NULL == port) {
+        if (skb == NULL) {
+            rte_pktmbuf_free((struct rte_mbuf*)skb);
         }
         return NAT_LB_INVALID;
     }
 
-    if (mbuf->port != port->port_id) {
-        mbuf->port = port->port_id;
+    if (skb->mbuf.port != port->port_id) {
+        skb->mbuf.port = port->port_id;
     }
 
-    return port_hard_xmit(mbuf, port);
+    return port_hard_xmit(skb, port);
 }
 
 uint16_t port_rx_burst(uint16_t port_id, uint16_t queue_id) {
@@ -340,13 +348,14 @@ uint16_t port_rx_burst(uint16_t port_id, uint16_t queue_id) {
 
     cid = rte_lcore_id();
     rx_queue_conf = get_lcore_rx_queue_conf(cid, port_id, queue_id);
-    rx_n = rte_eth_rx_burst(port_id, queue_id, rx_queue_conf->mbufs, MAX_PKT_BURST);
+    rx_n = rte_eth_rx_burst(port_id, queue_id, (struct rte_mbuf**)rx_queue_conf->mbufs, MAX_PKT_BURST);
     rx_queue_conf->len = rx_n;
 
 #ifdef SHOW_RX_PKT
     int idx;
     for (idx = 0; idx < rx_queue_conf->len; idx++) {
-        fprintf(stdout, "Rcv on pkt, ");
+        // fprintf(stdout, "Rcv on pkt, ");
+        RTE_LOG(INFO, PORT, "Rcv on pkt\n");
         show_pkt(rx_queue_conf->mbufs[idx]);
     }
 #endif

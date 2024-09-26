@@ -6,6 +6,7 @@
 #define NAT_LB_COMMON_H
 
 #include <inttypes.h>
+#include "skb.h"
 
 enum {
     NAT_LB_OK = 0,
@@ -16,7 +17,7 @@ enum {
     NAT_LB_NO_ROUTE = -5,
 };
 
-void show_pkt(struct rte_mbuf *pkt);
+void show_pkt(sk_buff_t *pkt);
 uint32_t ip_to_int(char *str);
 
 #endif //NAT_LB_COMMON_H

@@ -65,16 +65,16 @@ static void show_arp_pkt(struct rte_ether_hdr *eth_hdr, struct rte_arp_hdr *arp)
             arp->arp_hardware, arp->arp_opcode);
 }
 
-void show_pkt(struct rte_mbuf *pkt) {
+void show_pkt(sk_buff_t *pkt) {
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ipv4_hdr;
     struct rte_arp_hdr *arp;
 
-    eth_hdr = rte_pktmbuf_mtod(pkt, struct rte_ether_hdr*);
+    eth_hdr = rte_pktmbuf_mtod((struct rte_mbuf*)pkt, struct rte_ether_hdr*);
     if (htons(RTE_ETHER_TYPE_IPV4) == eth_hdr->ether_type) {
         ipv4_hdr = (struct rte_ipv4_hdr *) (eth_hdr + 1);
         show_pkt_hdr(eth_hdr, ipv4_hdr);
-        show_pkt_metadata(pkt);
+        show_pkt_metadata((struct rte_mbuf*)pkt);
     } else if (htons(RTE_ETHER_TYPE_ARP) == eth_hdr->ether_type) {
         arp = (struct rte_arp_hdr *)(eth_hdr + 1);
         show_arp_pkt(eth_hdr, arp);

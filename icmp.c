@@ -17,27 +17,27 @@
 
 struct icmp_handler {
     bool is_error;
-    int (*handler)(struct rte_mbuf*, struct rte_ipv4_hdr *iph);
+    int (*handler)(sk_buff_t *skb, struct rte_ipv4_hdr *iph);
 };
 
-static int icmp_echo(struct rte_mbuf *mbuf, struct rte_ipv4_hdr *iph) {
+static int icmp_echo(sk_buff_t *skb, struct rte_ipv4_hdr *iph) {
     struct rte_icmp_hdr *ich;
     uint16_t c_sum;
     struct flow4 fl4;
 
-    ich = rte_pktmbuf_mtod(mbuf, struct rte_icmp_hdr*);
+    ich = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_icmp_hdr*);
     ich->icmp_type = RTE_IP_ICMP_ECHO_REPLY;
     ich->icmp_cksum = 0;
-    c_sum = rte_raw_cksum(ich, mbuf->pkt_len);
+    c_sum = rte_raw_cksum(ich, skb->mbuf.pkt_len);
     ich->icmp_cksum = (c_sum == 0xffff) ? c_sum : ~c_sum;
 
     memset(&fl4, 0, sizeof(struct flow4));
     fl4.src_addr = iph->dst_addr;
     fl4.dst_addr = iph->src_addr;
-    fl4.flc.flc_oif = get_port_by_id(mbuf->port);
+    fl4.flc.flc_oif = get_port_by_id(skb->mbuf.port);
     fl4.flc.proto = IPPROTO_ICMP;
 
-    return ipv4_xmit(mbuf, &fl4);
+    return ipv4_xmit(skb, &fl4);
 
     return NAT_LB_OK;
 }
@@ -48,22 +48,22 @@ static struct icmp_handler icmp_ctrl[MAX_ICMP_CTRL] = {
         }
 };
 
-static int icmp_rcv(struct rte_mbuf *mbuf, struct rte_ipv4_hdr *iph) {
+static int icmp_rcv(sk_buff_t *skb, struct rte_ipv4_hdr *iph) {
     struct rte_icmp_hdr *ich;
     unsigned char icmp_type;
     struct icmp_handler *handler;
 
-    ich = rte_pktmbuf_mtod(mbuf, struct rte_icmp_hdr*);
+    ich = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_icmp_hdr*);
 
     icmp_type = ich->icmp_type;
     handler = &icmp_ctrl[icmp_type];
     if (NULL == handler) {
         goto drop;
     }
-    return handler->handler(mbuf, iph);
+    return handler->handler(skb, iph);
 
 drop:
-    rte_pktmbuf_free(mbuf);
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
 
     return NAT_LB_OK;
 }

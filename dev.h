@@ -10,8 +10,11 @@
 #include <rte_mempool.h>
 #include <rte_common.h>
 #include "list.h"
+#include "skb.h"
 
 struct dev_port;
+
+struct sk_buff;
 
 struct port_conf {
     uint16_t port_id;
@@ -25,7 +28,7 @@ struct port_conf {
 };
 
 struct port_ops {
-    int (*op_xmit) (struct rte_mbuf *mbuf, struct dev_port *port);
+    int (*op_xmit) (struct sk_buff *mbuf, struct dev_port *port);
 };
 
 struct dev_port {
@@ -54,7 +57,7 @@ int add_port_configure(struct port_conf *conf);
 void port_init(void);
 void port_start_all(void);
 uint16_t port_rx_burst(uint16_t port_id, uint16_t queue_id);
-int port_xmit(struct rte_mbuf *mbuf, struct dev_port *port);
+int port_xmit(struct sk_buff *skb, struct dev_port *port);
 struct dev_port* get_port_by_id(unsigned int port_id);
 
 #endif //NAT_LB_DEV_H

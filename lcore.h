@@ -4,6 +4,7 @@
 
 #include <inttypes.h>
 #include <rte_mbuf.h>
+#include "skb.h"
 
 #ifndef NAT_LB_LCORE_H
 #define NAT_LB_LCORE_H
@@ -23,7 +24,7 @@ enum lcore_type {
 struct lcore_queue_conf {
     uint16_t queue_id;
     uint16_t len;
-    struct rte_mbuf *mbufs[MAX_PKT_BURST];
+    sk_buff_t *mbufs[MAX_PKT_BURST];
 };
 
 struct lcore_port_conf {

@@ -75,19 +75,19 @@ struct neighbor* neighbor_lookup(uint32_t next_hop) {
     return NULL;
 }
 
-static void neigh_fill_mac(struct rte_mbuf *mbuf, struct neighbor *neighbor, struct dev_port *port) {
+static void neigh_fill_mac(sk_buff_t *skb, struct neighbor *neighbor, struct dev_port *port) {
     struct rte_ether_hdr *eth_hdr;
     uint16_t pkt_type;
 
-    mbuf->l2_len = sizeof(struct rte_ether_hdr);
-    eth_hdr = (struct rte_ether_hdr*)rte_pktmbuf_prepend(mbuf, (uint16_t)sizeof(struct rte_ether_hdr));
+    skb->mbuf.l2_len = sizeof(struct rte_ether_hdr);
+    eth_hdr = (struct rte_ether_hdr*)rte_pktmbuf_prepend((struct rte_mbuf*)skb, (uint16_t)sizeof(struct rte_ether_hdr));
     rte_ether_addr_copy(&neighbor->mac, &eth_hdr->dst_addr);
     rte_ether_addr_copy(&port->mac, &eth_hdr->src_addr);
-    pkt_type = (uint16_t)mbuf->packet_type;
+    pkt_type = (uint16_t)skb->mbuf.packet_type;
     eth_hdr->ether_type = rte_cpu_to_be_16(pkt_type);
 }
 
-static int neigh_solicit(uint32_t next_hop, struct rte_mbuf *mbuf, struct dev_port *port) {
+static int neigh_solicit(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port) {
     struct neighbor *neighbor;
     struct neigh_mbuf *neigh_mbuf;
     int hash;
@@ -109,25 +109,25 @@ static int neigh_solicit(uint32_t next_hop, struct rte_mbuf *mbuf, struct dev_po
     INIT_LIST_HEAD(&neighbor->wait_pkt);
     list_add(&neighbor->neighbor_list_node, &g_neigh_table[hash]);
 
-    neigh_mbuf->mbuf = mbuf;
+    neigh_mbuf->skb= skb;
     list_add(&neigh_mbuf->neigh_mbuf_node, &neighbor->wait_pkt);
 
     return arp_send(port, port->local_ip, next_hop);
 }
 
-int neigh_output(uint32_t next_hop, struct rte_mbuf *mbuf, struct dev_port *port) {
+int neigh_output(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port) {
     struct neighbor *neighbor;
 
     neighbor = neighbor_lookup(next_hop);
     if (NULL == neighbor || 0 == neighbor->next_hop) {
         fprintf(stderr, "No neighbor to %u.%u.%u.%u, solicit it.\n", next_hop & 0xff, (next_hop>>8) & 0xff, (next_hop>>16) & 0xff, (next_hop>>24) & 0xff);
-        return neigh_solicit(next_hop, mbuf, port);
+        return neigh_solicit(next_hop, skb, port);
     }
 
-    neigh_fill_mac(mbuf, neighbor, port);
-    port_xmit(mbuf, port);
+    neigh_fill_mac(skb, neighbor, port);
+    port_xmit(skb, port);
 drop:
-    rte_pktmbuf_free(mbuf);
+    rte_pktmbuf_free(skb);
 
     return NAT_LB_OK;
 }

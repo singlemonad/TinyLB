@@ -177,4 +177,6 @@ add_executable(nat-lb main.c
         arp.h
         arp.c
         ct.h
-        ct.c)
+        ct.c
+        skb.h
+        skb.c)

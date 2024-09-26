@@ -5,6 +5,8 @@
 #ifndef NAT_LB_ARP_H
 #define NAT_LB_ARP_H
 
+#include "skb.h"
+
 void arp_init(void);
 int arp_send(struct dev_port *port, uint32_t src_ip, uint32_t dst_ip);
 

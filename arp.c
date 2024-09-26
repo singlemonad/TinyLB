@@ -11,15 +11,16 @@
 #include "arp.h"
 #include "neigh.h"
 
-static int arp_rcv(struct rte_mbuf *mbuf, struct dev_port *port) {
+static int arp_rcv(sk_buff_t *skb) {
     int ret;
     struct rte_arp_hdr *arp;
     uint32_t arp_sip, arp_tip;
     struct rte_ether_addr arp_sha, arp_tha;
     struct neighbor *neighbor;
     struct neigh_mbuf *neigh_mbuf;
+    struct dev_port *port;
 
-    arp = rte_pktmbuf_mtod(mbuf, struct rte_arp_hdr*);
+    arp = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_arp_hdr*);
     arp_tip = ntohl(arp->arp_data.arp_tip);
     if (arp->arp_opcode == ntohs(RTE_ARP_OP_REQUEST)) {
         return NAT_LB_OK;
@@ -32,7 +33,8 @@ static int arp_rcv(struct rte_mbuf *mbuf, struct dev_port *port) {
             rte_ether_addr_copy(&arp_sha, &neighbor->mac);
             list_for_each_entry(neigh_mbuf, &neighbor->wait_pkt, neigh_mbuf_node) {
                 fprintf(stdout, "xmit wait pkt.\n");
-                port_xmit(neigh_mbuf->mbuf, port);
+                port = get_port_by_id(skb->mbuf.port);
+                port_xmit(neigh_mbuf->skb, port);
             }
             // TODO free neigh_mbuf
             return NAT_LB_OK;
@@ -50,17 +52,17 @@ static int arp_rcv(struct rte_mbuf *mbuf, struct dev_port *port) {
 }
 
 int arp_send(struct dev_port *port, uint32_t src_ip, uint32_t dst_ip) {
-    struct rte_mbuf *mbuf;
+    sk_buff_t *skb;
     struct rte_ether_hdr *eth;
     struct rte_arp_hdr *arp;
 
-    mbuf = rte_pktmbuf_alloc(port->mbuf_pool);
-    if (NULL == mbuf) {
+    skb = (sk_buff_t*)rte_pktmbuf_alloc(port->mbuf_pool);
+    if (NULL == skb) {
         fprintf(stderr, "No memory, %s\n", __func__ );
         return NAT_LB_NOMEM;
     }
 
-    eth = rte_pktmbuf_mtod(mbuf, struct rte_ether_hdr*);
+    eth = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ether_hdr*);
     arp = (struct rte_arp_hdr*)&eth[1];
 
     rte_ether_addr_copy(&port->mac, &eth->src_addr);
@@ -78,13 +80,13 @@ int arp_send(struct dev_port *port, uint32_t src_ip, uint32_t dst_ip) {
     arp->arp_plen = 4;
     arp->arp_opcode = htons(RTE_ARP_OP_REQUEST);
 
-    mbuf->pkt_len = 60;
-    mbuf->data_len = 60;
-    mbuf->l2_len = sizeof(struct rte_ether_hdr);
-    mbuf->l3_len = sizeof(struct rte_arp_hdr);
+    skb->mbuf.pkt_len = 60;
+    skb->mbuf.data_len = 60;
+    skb->mbuf.l2_len = sizeof(struct rte_ether_hdr);
+    skb->mbuf.l3_len = sizeof(struct rte_arp_hdr);
 
     memset(&arp[1], 0, 18);
-    port_xmit(mbuf, port);
+    port_xmit(skb, port);
 
     return NAT_LB_OK;
 }

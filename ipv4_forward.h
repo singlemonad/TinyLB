@@ -7,7 +7,8 @@
 
 #include <rte_mbuf.h>
 #include "route.h"
+#include "skb.h"
 
-int ipv4_forward(struct rte_mbuf *mbuf, struct route_entry *rt_entry);
+int ipv4_forward(sk_buff_t *skb);
 
 #endif //NAT_LB_IPV4_FORWARD_H

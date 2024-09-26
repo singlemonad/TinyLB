@@ -1,1 +1,0 @@
-/usr/bin/cc -g CMakeFiles/nat_lb.dir/main.c.o -o nat_lb 
