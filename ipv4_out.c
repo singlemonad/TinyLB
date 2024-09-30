@@ -8,18 +8,18 @@
 #include "inet.h"
 #include "neigh.h"
 
-int ipv4_output(sk_buff_t *skb) {
+int ipv4_output(sk_buff_t *skb, sk_ext_info_t *ext) {
     uint32_t next_hop;
     struct rte_ipv4_hdr *iph;
 
-    if (NULL == skb->rt_entry) {
+    if (NULL == ext->ct->rt_entry) {
         fprintf(stderr, "No route.\n");
         goto drop;
     }
 
     iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-    if (skb->rt_entry->gw != 0) {
-        next_hop = skb->rt_entry->gw;
+    if (ext->ct->rt_entry->gw != 0) {
+        next_hop = ext->ct->rt_entry->gw;
     } else {
         next_hop = iph->dst_addr;
     }
@@ -28,9 +28,9 @@ int ipv4_output(sk_buff_t *skb) {
     iph->hdr_checksum = rte_ipv4_cksum(iph);
 
     skb->mbuf.packet_type = RTE_ETHER_TYPE_IPV4;
-    skb->mbuf.port = skb->rt_entry->port->port_id;
+    skb->mbuf.port = ext->ct->rt_entry->port->port_id;
 
-    return neigh_output(next_hop, skb, skb->rt_entry->port);
+    return neigh_output(next_hop, skb, ext->ct->rt_entry->port);
 
 drop:
     rte_pktmbuf_free((struct rte_mbuf*)skb);
@@ -40,13 +40,14 @@ drop:
 int ipv4_xmit(sk_buff_t *skb, struct flow4 *fl4) {
     struct rte_ipv4_hdr *iph;
     struct route_entry *rt_entry;
+    sk_ext_info_t ext;
 
     fl4->dst_addr = rte_be_to_cpu_32(fl4->dst_addr);
     rt_entry = route_egress_lockup(fl4);
     if (NULL == rt_entry) {
         goto no_route;
     }
-    skb->rt_entry = rt_entry;
+    ext.ct->rt_entry = rt_entry;
     fl4->dst_addr = rte_cpu_to_be_32(fl4->dst_addr);
 
     iph = (struct rte_ipv4_hdr*)rte_pktmbuf_prepend((struct rte_mbuf*)skb, sizeof(struct rte_ipv4_hdr));
@@ -61,7 +62,7 @@ int ipv4_xmit(sk_buff_t *skb, struct flow4 *fl4) {
         // TODO select src addr
     }
 
-    return ipv4_output(skb);
+    return ipv4_output(skb, &ext);
 
 no_route:
     fprintf(stderr, "No route, %s, dst %u.%u.%u.%u.\n",

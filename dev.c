@@ -14,8 +14,8 @@
 #define PKT_MBUF_POOL_NB 4096
 #define PKT_MBUF_POOL_CACHE_SIZE 256
 
-#define SHOW_RX_PKT 0
-#define SHOW_TX_PKT 0
+// #define SHOW_RX_PKT 0
+// #define SHOW_TX_PKT 0
 
 static struct rte_eth_conf default_conf = {};
 
@@ -38,12 +38,6 @@ static void pkt_mbuf_pool_init(void) {
     socket_n = rte_socket_count();
     for (i = 0; i < socket_n; i++) {
         snprintf(name, 64, "pkt_mbuf_pool_%d", i);
-        /*g_pkt_mbuf_pool[i] = rte_pktmbuf_pool_create(name,
-                                                PKT_MBUF_POOL_NB,
-                                                PKT_MBUF_POOL_CACHE_SIZE,
-                                                0,
-                                                RTE_MBUF_DEFAULT_BUF_SIZE,
-                                                (int)i);*/
         g_pkt_mbuf_pool[i] = rte_mempool_create(name,
                                                 PKT_MBUF_POOL_NB,
                                                 MBUF_SIZE,
@@ -125,7 +119,7 @@ static struct dev_port* port_alloc(uint16_t port_id, struct rte_eth_conf *conf) 
 
     port = rte_zmalloc("dev_port", sizeof(struct dev_port), RTE_CACHE_LINE_SIZE);
     if (port == NULL) {
-        RTE_LOG(ERR, EAL, "No memory: %s", __func__);
+        RTE_LOG(ERR, PORT, "No memory: %s", __func__);
         return port;
     }
 
@@ -175,7 +169,7 @@ static void port_tx_burst(uint16_t cid, uint16_t port_id, uint16_t qid) {
 #ifdef SHOW_TX_PKT
     int idx;
     for (idx = 0; idx < tx_queue_conf->len; idx++) {
-         fprintf(stdout, "Tx one pkt, dev_port %d.\n", port_id);
+         RTE_LOG(INFO, PORT, "Tx one pkt, dev_port %d.\n", port_id);
          show_pkt(tx_queue_conf->mbufs[idx]);
     }
 #endif
@@ -354,7 +348,6 @@ uint16_t port_rx_burst(uint16_t port_id, uint16_t queue_id) {
 #ifdef SHOW_RX_PKT
     int idx;
     for (idx = 0; idx < rx_queue_conf->len; idx++) {
-        // fprintf(stdout, "Rcv on pkt, ");
         RTE_LOG(INFO, PORT, "Rcv on pkt\n");
         show_pkt(rx_queue_conf->mbufs[idx]);
     }

@@ -9,6 +9,6 @@
 #include "route.h"
 #include "skb.h"
 
-int ipv4_forward(sk_buff_t *skb);
+int ipv4_forward(sk_buff_t *skb, sk_ext_info_t *ext);
 
 #endif //NAT_LB_IPV4_FORWARD_H

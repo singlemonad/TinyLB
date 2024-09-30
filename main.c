@@ -18,6 +18,8 @@
 #include "acl.h"
 #include "arp.h"
 #include "ct.h"
+#include "svc.h"
+#include "sa_pool.h"
 
 struct acl_ipv4_rule;
 
@@ -83,7 +85,7 @@ static void configure_port(void) {
     port_conf->tx_desc_n = 1024;
     port_conf->mtu = 1500;
     port_conf->local_ip = ip_to_int(local_ip2);
-    add_port_configure(port_conf);
+    // add_port_configure(port_conf);
 }
 
 static void configure_route(void) {
@@ -99,6 +101,12 @@ static void configure_route(void) {
 
     char dst_addr2[] = "169.254.0.0";
     ret = route_add(ip_to_int(dst_addr2), 16, 1500, 0, 0, port, 0, RTF_LOCAL);
+    if (ret != NAT_LB_OK) {
+        rte_exit(EXIT_FAILURE, "Add route failed, %s.", rte_strerror(rte_errno));
+    }
+
+    char dst_addr3[] = "192.168.0.0";
+    ret = route_add(ip_to_int(dst_addr3), 16, 1500, 0, 0, port, 0, RTF_LOCAL);
     if (ret != NAT_LB_OK) {
         rte_exit(EXIT_FAILURE, "Add route failed, %s.", rte_strerror(rte_errno));
     }
@@ -160,6 +168,33 @@ static void configure_acl(void) {
     }
 }
 
+static void configure_svc(void) {
+    svc_t *svc;
+
+    char vip[] = "192.168.0.6";
+    uint16_t vport = htons(8080);
+    if (NAT_LB_OK != svc_add(rte_cpu_to_be_32(ip_to_int(vip)), vport)) {
+        rte_exit(EXIT_FAILURE, "Add svc failed");
+    }
+
+    svc = svc_find(rte_cpu_to_be_32(ip_to_int(vip)), vport);
+    if (NULL == svc) {
+        rte_exit(EXIT_FAILURE, "No svc found.");
+    }
+
+    char rs_ip[] = "172.16.0.17";
+    uint16_t rs_port = htons(80);
+    if (NAT_LB_OK != rs_add(svc, rte_cpu_to_be_32(ip_to_int(rs_ip)), rs_port)) {
+        rte_exit(EXIT_FAILURE, "Add rs failed");
+    }
+
+    // add sa pool for vip
+    char snat_ip[] = "172.16.0.2";
+    if (NAT_LB_OK != snat_addr_add(rte_cpu_to_be_32(ip_to_int(vip)), vport, rte_cpu_to_be_32(ip_to_int(snat_ip)))) {
+        rte_exit(EXIT_FAILURE, "Add snat addr failed");
+    }
+}
+
 static void show_stats(void) {
     int ret;
     struct rte_eth_stats stats;
@@ -171,12 +206,12 @@ static void show_stats(void) {
     fprintf(stdout, "Port 0, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu.\n",
             stats.ipackets, stats.opackets, stats.ierrors, stats.oerrors);
 
-    ret = rte_eth_stats_get(1, &stats);
-    fprintf(stdout, "Port 1, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu.\n",
-            stats.ipackets, stats.opackets, stats.ierrors, stats.oerrors);
-    if (ret != NAT_LB_OK) {
-        rte_exit(EXIT_FAILURE, "Eth stats failed, %s.", rte_strerror(rte_errno));
-    }
+    // ret = rte_eth_stats_get(1, &stats);
+    // fprintf(stdout, "Port 1, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu.\n",
+    //         stats.ipackets, stats.opackets, stats.ierrors, stats.oerrors);
+    // if (ret != NAT_LB_OK) {
+    //     rte_exit(EXIT_FAILURE, "Eth stats failed, %s.", rte_strerror(rte_errno));
+    // }
 }
 
 int main(int argc, char *argv[]) {
@@ -202,13 +237,15 @@ int main(int argc, char *argv[]) {
     configure_route();
     l2_init();
     neigh_init();
-    // configure_neighbor();
     icmp_init();
     ipv4_in_init();
     acl_init();
     configure_acl();
     arp_init();
     ct_init();
+    svc_init();
+    sa_pool_init();
+    configure_svc();
     port_start_all();
 
     lcore_start(false);
@@ -226,7 +263,7 @@ int main(int argc, char *argv[]) {
             .dst_addr = ip_to_int(dst_ip)
     };
     struct ct_tuple_hash original = {
-            .tuple = {
+            .tuple_hash = {
                     .ports.src_port = 56678,
                     .ports.dst_port = 8080,
                     .src_addr = ip_to_int(src_ip),
@@ -234,7 +271,7 @@ int main(int argc, char *argv[]) {
             }
     };
     struct ct_tuple_hash reply = {
-            .tuple = {
+            .tuple_hash = {
                     .ports.src_port = 8080,
                     .ports.dst_port = 56678,
                     .src_addr = ip_to_int(dst_ip),

@@ -179,4 +179,9 @@ add_executable(nat-lb main.c
         ct.h
         ct.c
         skb.h
-        skb.c)
+        skb.c
+        log.h
+        svc.h
+        svc.c
+        sa_pool.h
+        sa_pool.c)

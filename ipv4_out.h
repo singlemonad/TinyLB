@@ -11,6 +11,6 @@
 #include "skb.h"
 
 int ipv4_xmit(sk_buff_t *skb, struct flow4 *fl4);
-int ipv4_output(sk_buff_t *skb);
+int ipv4_output(sk_buff_t *skb, sk_ext_info_t *ext);
 
 #endif //NAT_LB_IPV4_OUT_H

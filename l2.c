@@ -6,6 +6,7 @@
 #include <rte_mbuf_core.h>
 #include "common.h"
 #include "l2.h"
+#include "log.h"
 
 static struct list_head g_pkt_types;
 
@@ -46,7 +47,7 @@ static int l2_deliver_mbuf(sk_buff_t *skb) {
 
     l3_handler = get_pkt_type(rte_be_to_cpu_16(eth_hdr->ether_type));
     if (NULL == l3_handler) {
-        fprintf(stderr, "No l3 handler for %d.\n", rte_be_to_cpu_16(eth_hdr->ether_type));
+        RTE_LOG(ERR, L3, "No l3 handler for %d.\n", rte_be_to_cpu_16(eth_hdr->ether_type));
         goto drop;
     }
     return l3_handler->func(skb);
@@ -60,13 +61,13 @@ int l2_rcv(sk_buff_t *skb) {
     struct dev_port *port;
 
     if (NULL == skb || skb->mbuf.data_len == 0 || skb->mbuf.pkt_len == 0) {
-        fprintf(stderr, "Rcv empty pkt.\n");
+        RTE_LOG(ERR, L2, "Rcv empty pkt.\n");
         return NAT_LB_OK;
     }
 
     port = get_port_by_id(skb->mbuf.port);
     if (NULL == port) {
-        fprintf(stderr, "No dev_port found %d.", skb->mbuf.port);
+        RTE_LOG(ERR, L2, "No dev_port found %d.", skb->mbuf.port);
         rte_pktmbuf_free((struct rte_mbuf*)skb);
         return NAT_LB_OK;
     }

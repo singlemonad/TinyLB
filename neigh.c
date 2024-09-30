@@ -127,7 +127,7 @@ int neigh_output(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port) {
     neigh_fill_mac(skb, neighbor, port);
     port_xmit(skb, port);
 drop:
-    rte_pktmbuf_free(skb);
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
 
     return NAT_LB_OK;
 }

@@ -15,9 +15,12 @@ enum {
     NAT_LB_NOMEM = -3,
     NAT_LB_NOT_EXIST = -4,
     NAT_LB_NO_ROUTE = -5,
+    NAT_LB_CT_MISS = -6,
+    NAT_LB_NO_SNAT_PORT = -7,
 };
 
 void show_pkt(sk_buff_t *pkt);
 uint32_t ip_to_int(char *str);
+void show_ip(rte_be32_t addr);
 
 #endif //NAT_LB_COMMON_H

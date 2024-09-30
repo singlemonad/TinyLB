@@ -15,7 +15,7 @@ static void show_mac(struct rte_ether_addr *addr) {
             RTE_ETHER_ADDR_BYTES(addr));
 }
 
-static void show_ip(rte_be32_t addr) {
+void show_ip(rte_be32_t addr) {
     fprintf(stdout, "%u.%u.%u.%u", addr & 0xff, (addr >> 8) & 0xff, (addr >> 16) & 0xff, (addr >> 24) & 0xff);
 }
 
