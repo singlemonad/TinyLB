@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
-project(nat-lb C)
+project(nat-lb)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 set(WERROR_FLAGS
         -W
@@ -39,6 +39,8 @@ set(WERROR_FLAGS
         -Wno-missing-field-initializers
         -Wno-zero-length-bounds
         -Wno-format-truncation
+        -Wno-abi
+        -Wno-psabi
 )
 
 set(CFLAGS
@@ -134,6 +136,9 @@ add_definitions(
 add_compile_options(${CFLAGS})
 
 include_directories(/usr/local/include)
+include_directories(
+        ./include
+)
 
 link_directories(/usr/local/lib64)
 
@@ -146,42 +151,41 @@ link_libraries(
         pcap)
 
 add_executable(nat-lb main.c
-        dev.h
-        dev.c
-        list.h
-        lcore.h
-        common.h
-        lcore.c
-        l2.h
-        l2.c
-        scheduler.h
-        scheduler.c
-        route.h
-        route.c
-        flow.h
-        ipv4_in.h
-        ipv4_in.c
-        ipv4_out.h
-        ipv4_forward.h
-        ipv4_forward.c
-        neigh.h
-        neigh.c
-        ipv4_out.c
-        common.c
-        icmp.h
-        icmp.c
-        inet.c
-        inet.h
-        acl.h
-        acl.c
-        arp.h
-        arp.c
-        ct.h
-        ct.c
-        skb.h
-        skb.c
-        log.h
-        svc.h
-        svc.c
-        sa_pool.h
-        sa_pool.c)
+        include/dev.h
+        src/dev.c
+        include/list.h
+        include/common.h
+        include/route.h
+        src/route.c
+        include/flow.h
+        include/ipv4.h
+        src/ipv4.c
+        include/neigh.h
+        src/neigh.c
+        src/common.c
+        include/icmp.h
+        src/icmp.c
+        src/inet.c
+        include/inet.h
+        include/acl.h
+        src/acl.c
+        include/arp.h
+        src/arp.c
+        include/ct.h
+        src/ct.c
+        include/skb.h
+        src/skb.c
+        include/log.h
+        include/svc.h
+        src/svc.c
+        include/sa_pool.h
+        src/sa_pool.c
+        include/pipeline.h
+        src/pipeline.c
+        src/lb.c
+        include/lb.h
+        include/jiffies.h
+        src/jiffies.c
+        src/thread.c
+        include/thread.h)
+

@@ -6,59 +6,44 @@
 #include <rte_errno.h>
 #include <rte_pdump.h>
 #include <rte_malloc.h>
-#include "common.h"
-#include "dev.h"
-#include "lcore.h"
-#include "scheduler.h"
-#include "route.h"
-#include "l2.h"
-#include "ipv4_in.h"
-#include "neigh.h"
-#include "icmp.h"
-#include "acl.h"
-#include "arp.h"
-#include "ct.h"
-#include "svc.h"
-#include "sa_pool.h"
+#include <rte_timer.h>
+#include "include/common.h"
+#include "include/dev.h"
+#include "include/lcore.h"
+#include "include/scheduler.h"
+#include "include/route.h"
+#include "include/ipv4.h"
+#include "include/neigh.h"
+#include "include/icmp.h"
+#include "include/acl.h"
+#include "include/arp.h"
+#include "include/ct.h"
+#include "include/svc.h"
+#include "include/sa_pool.h"
+#include "include/lb.h"
+#include "include/thread.h"
 
 struct acl_ipv4_rule;
 
+static struct rx_thread_cfg rx_thread_cfg1 = {
+    .cfg = {
+            .thread_id = 0,
+    },
+    .n_queue = 1,
+};
+
 static void configure_lcore(void) {
-    struct lcore_queue_conf rx_queue_conf, tx_queue_conf;
-    struct lcore_port_conf port_conf, port_conf2;
-    struct lcore_conf lcore_conf;
+    rx_thread_cfg1.queues[0].port_id = 0;
+    rx_thread_cfg1.queues[0].queue_id = 0;
 
-    rx_queue_conf.queue_id = 0;
-    rx_queue_conf.len = 0;
-
-    tx_queue_conf.queue_id = 0;
-    tx_queue_conf.len = 0;
-
-    port_conf.port_id = 0;
-    port_conf.rxq_n = 1;
-    port_conf.txq_n = 1;
-    port_conf.rxq[0] = rx_queue_conf;
-    port_conf.txq[0] = tx_queue_conf;
-
-    port_conf2.port_id = 1;
-    port_conf2.rxq_n = 0;
-    port_conf2.txq_n = 0;
-    port_conf2.rxq[0] = rx_queue_conf;
-    port_conf2.txq[0] = tx_queue_conf;
-
-    lcore_conf.lcore_id = 1;
-    lcore_conf.type = LCORE_TYPE_FWD_WORKER;
-    lcore_conf.ports_n = 2;
-    lcore_conf.ports[0] = port_conf;
-    lcore_conf.ports[1] = port_conf2;
-
-    add_lcore_configure(lcore_conf);
+    struct thread* rx_thread = create_rx_thread(&rx_thread_cfg1);
+    lcore_add_thread(1, rx_thread);
 }
 
 static void configure_port(void) {
     struct port_conf *port_conf;
 
-    port_conf = rte_zmalloc("dev_port conf", sizeof (struct port_conf), RTE_CACHE_LINE_SIZE);
+    port_conf = (struct port_conf*)rte_zmalloc("dev_port conf", sizeof (struct port_conf), RTE_CACHE_LINE_SIZE);
     if (NULL == port_conf) {
         rte_exit(EXIT_FAILURE, "No memory, %s.", __func__ );
     }
@@ -71,10 +56,10 @@ static void configure_port(void) {
     port_conf->tx_desc_n = 1024;
     port_conf->mtu = 1500;
     port_conf->local_ip = ip_to_int(local_ip);
-    add_port_configure(port_conf);
+    dev_add_port_configure(port_conf);
 
     char local_ip2[] = "172.16.0.15";
-    port_conf = rte_zmalloc("dev_port conf", sizeof (struct port_conf), RTE_CACHE_LINE_SIZE);
+    port_conf = (struct port_conf*)rte_zmalloc("dev_port conf", sizeof (struct port_conf), RTE_CACHE_LINE_SIZE);
     if (NULL == port_conf) {
         rte_exit(EXIT_FAILURE, "No memory, %s.", __func__ );
     }
@@ -85,7 +70,7 @@ static void configure_port(void) {
     port_conf->tx_desc_n = 1024;
     port_conf->mtu = 1500;
     port_conf->local_ip = ip_to_int(local_ip2);
-    // add_port_configure(port_conf);
+    // dev_add_port_configure(port_conf);
 }
 
 static void configure_route(void) {
@@ -107,6 +92,12 @@ static void configure_route(void) {
 
     char dst_addr3[] = "192.168.0.0";
     ret = route_add(ip_to_int(dst_addr3), 16, 1500, 0, 0, port, 0, RTF_LOCAL);
+    if (ret != NAT_LB_OK) {
+        rte_exit(EXIT_FAILURE, "Add route failed, %s.", rte_strerror(rte_errno));
+    }
+
+    char dst_addr4[] = "172.16.0.17";
+    ret = route_add(ip_to_int(dst_addr4), 32, 1500, 0, 0, port, 0, RTF_FORWARD);
     if (ret != NAT_LB_OK) {
         rte_exit(EXIT_FAILURE, "Add route failed, %s.", rte_strerror(rte_errno));
     }
@@ -203,8 +194,8 @@ static void show_stats(void) {
     if (ret != NAT_LB_OK) {
         rte_exit(EXIT_FAILURE, "Eth stats failed, %s.", rte_strerror(rte_errno));
     }
-    fprintf(stdout, "Port 0, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu.\n",
-            stats.ipackets, stats.opackets, stats.ierrors, stats.oerrors);
+    fprintf(stdout, "Port 0, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu,imissed=%lu.\n",
+            stats.ipackets, stats.opackets, stats.ierrors, stats.oerrors, stats.imissed);
 
     // ret = rte_eth_stats_get(1, &stats);
     // fprintf(stdout, "Port 1, in_pkt=%lu,out_pkt=%lu,in_error=%lu,out_error=%lu.\n",
@@ -222,6 +213,8 @@ int main(int argc, char *argv[]) {
         rte_exit(EXIT_FAILURE, "Init eal failed, %s.", rte_strerror(rte_errno));
     }
 
+    rte_timer_subsystem_init();
+
     ret = rte_pdump_init();
     if (ret < 0) {
         rte_exit(EXIT_FAILURE, "Init pcap failed, %s.", rte_strerror(rte_errno));
@@ -230,25 +223,27 @@ int main(int argc, char *argv[]) {
     configure_port();
     configure_lcore();
 
-    scheduler_init();
-    lcore_init();
-    port_init();
-    route_init((int)rte_socket_id());
+    dev_port_init();
+    route_module_init((int) rte_socket_id());
     configure_route();
-    l2_init();
     neigh_init();
     icmp_init();
-    ipv4_in_init();
-    acl_init();
+    ipv4_init();
+    acl_module_init();
     configure_acl();
     arp_init();
-    ct_init();
     svc_init();
+    ct_module_init();
+    lb_module_init();
     sa_pool_init();
     configure_svc();
-    port_start_all();
 
-    lcore_start(false);
+    int port_amount = 1;
+    for (int i = 0; i < port_amount; i++) {
+        dev_port_start(i);
+    }
+
+    start_lcore(1);
 
     while (1) {
         rte_delay_us_sleep(10000000);
@@ -257,43 +252,4 @@ int main(int argc, char *argv[]) {
 
     return NAT_LB_OK;
 
-    /* char src_ip[] = "10.0.0.4";
-    char dst_ip[] = "172.16.0.2";
-    struct route_entry rt_entry = {
-            .dst_addr = ip_to_int(dst_ip)
-    };
-    struct ct_tuple_hash original = {
-            .tuple_hash = {
-                    .ports.src_port = 56678,
-                    .ports.dst_port = 8080,
-                    .src_addr = ip_to_int(src_ip),
-                    .dst_addr = ip_to_int(dst_ip),
-            }
-    };
-    struct ct_tuple_hash reply = {
-            .tuple_hash = {
-                    .ports.src_port = 8080,
-                    .ports.dst_port = 56678,
-                    .src_addr = ip_to_int(dst_ip),
-                    .dst_addr = ip_to_int(src_ip),
-            }
-    };
-    struct ct_session ct = {
-        .tuple_hash= {
-                original,
-                reply
-        },
-        .rt_entry = &rt_entry
-    };
-
-    struct list_head ct_table;
-    INIT_LIST_HEAD(&ct_table);
-    list_add(&ct.tuple_hash[CT_DRI_ORIGINAL].tuple_node, &ct_table);
-
-    struct ct_tuple_hash *curr;
-    list_for_each_entry(curr, &ct_table, tuple_node) {
-        // struct ct_session *get_ct = container_of(curr, struct ct_session, flows[CT_DRI_ORIGINAL]);
-        struct ct_session *get_ct = TUPLE_TO_CT(curr);
-        fprintf(stdout, "rt dst_ip=%d\n", get_ct->rt_entry->dst_addr);
-    } */
 }
