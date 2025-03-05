@@ -10,16 +10,18 @@
 #include <rte_malloc.h>
 #include "../common/util.h"
 #include "../common/log.h"
-#include "../common/list.h"
-#include "route.h"
 #include "../common/pipeline.h"
+#include "../common/thread.h"
+#include "route.h"
 
-static uint32_t g_route_entry_id_end;
-static struct list_head g_route_table_hash[ROUTE_TABLE_BUCKETS];
-static struct rte_lpm* g_route_table_lpm;
+extern __thread struct per_lcore_ct_ctx per_lcore_ctx;
+
+static uint32_t next_rt_id;
+static struct list_head route_table[ROUTE_TABLE_BUCKETS];
+static struct rte_lpm* lpm_table;
 
 static uint32_t get_route_entry_id(void) {
-    return g_route_entry_id_end++;
+    return next_rt_id++;
 }
 
 static int get_route_entry_hash(uint32_t route_entry_id) {
@@ -34,7 +36,7 @@ int route_add(uint32_t dst_addr, uint16_t mask, unsigned long mtu, uint32_t gw,
 
     rt_entry = rte_zmalloc("route entry", sizeof(struct route_entry), RTE_CACHE_LINE_SIZE);
     if (NULL == rt_entry) {
-        fprintf(stderr, "No memory, %s", __func__ );
+        RTE_LOG(ERR, ROUTE, "No memory, %s.\n", __func__ );
         return NAT_LB_NOMEM;
     }
 
@@ -48,14 +50,14 @@ int route_add(uint32_t dst_addr, uint16_t mask, unsigned long mtu, uint32_t gw,
     rt_entry->metric = metric;
     rt_entry->flags = flags;
 
-    ret = rte_lpm_add(g_route_table_lpm, rt_entry->dst_addr, rt_entry->mask, rt_entry->id);
+    ret = rte_lpm_add(lpm_table, rt_entry->dst_addr, rt_entry->mask, rt_entry->id);
     if (ret < 0) {
         rte_free(rt_entry);
         return ret;
     }
 
     hash = get_route_entry_hash(rt_entry->id);
-    list_add(&rt_entry->route_list_node, &g_route_table_hash[hash]);
+    list_add(&rt_entry->route_list_node, &route_table[hash]);
 
     return NAT_LB_OK;
 }
@@ -65,7 +67,7 @@ int route_del(uint32_t dst_addr, uint16_t mask) {
     uint32_t rt_entry_id;
     int ret, hash;
 
-    ret = rte_lpm_is_rule_present(g_route_table_lpm, dst_addr, mask, &rt_entry_id);
+    ret = rte_lpm_is_rule_present(lpm_table, dst_addr, mask, &rt_entry_id);
     if (ret == 0) {
         return NAT_LB_NOT_EXIST;
     }
@@ -74,7 +76,7 @@ int route_del(uint32_t dst_addr, uint16_t mask) {
     }
 
     hash = get_route_entry_hash(rt_entry_id);
-    list_for_each_entry(rt_entry, &g_route_table_hash[hash], route_list_node) {
+    list_for_each_entry(rt_entry, &route_table[hash], route_list_node) {
         if (rt_entry->id == rt_entry_id) {
             break;
         }
@@ -82,7 +84,7 @@ int route_del(uint32_t dst_addr, uint16_t mask) {
     if (NULL != rt_entry) {
         list_del(&rt_entry->route_list_node);
         rte_free(rt_entry);
-        rte_lpm_delete(g_route_table_lpm, dst_addr, mask);
+        rte_lpm_delete(lpm_table, dst_addr, mask);
     }
 
     return NAT_LB_OK;
@@ -94,13 +96,13 @@ static struct route_entry* route_lookup(uint32_t dst_addr) {
     unsigned int rt_entry_id;
     struct route_entry *rt_entry;
 
-    ret = rte_lpm_lookup(g_route_table_lpm, dst_addr, &rt_entry_id);
+    ret = rte_lpm_lookup(lpm_table, dst_addr, &rt_entry_id);
     if (ret != 0) {
         return NULL;
     }
 
     hash = get_route_entry_hash(rt_entry_id);
-    list_for_each_entry(rt_entry, &g_route_table_hash[hash], route_list_node) {
+    list_for_each_entry(rt_entry, &route_table[hash], route_list_node) {
         if (rt_entry->id == rt_entry_id) {
             return rt_entry;
         }
@@ -108,43 +110,39 @@ static struct route_entry* route_lookup(uint32_t dst_addr) {
     return NULL;
 }
 
-/* Client -> NAT-LB -> RS */
 struct route_entry* route_ingress_lockup(struct flow4* fl) {
-    return route_lookup(fl->dst_addr);
+    return route_lookup(rte_be_to_cpu_32(fl->dst_addr));
 }
 
-/* RS -> NAT-LB -> Client */
 struct route_entry* route_egress_lockup(struct  flow4* fl) {
-    return route_lookup(fl->dst_addr);
+    return route_lookup(rte_be_to_cpu_32(fl->dst_addr));
 }
 
 static pipeline_actions route_in(sk_buff_t *skb) {
-    per_cpu_ctx_t *ctx;
-    struct route_entry *rt_entry;
     struct flow4 fl4;
-    struct rte_ipv4_hdr *iph;
     struct rt_cache *rt;
+    struct rte_ipv4_hdr *iph;
+    struct route_entry *rt_entry;
+    struct per_lcore_ct_ctx *ctx;
 
-    ctx = get_per_cpu_ctx();
+    ctx = &per_lcore_ctx;
     rt = ct_ext_data_get(CT_EXT_ROUTE, ctx->ct);
     if (NULL != rt->port) {
-        return PIPELINE_ACTION_OUTPUT;
+        return (rt->flags & RTF_FORWARD) ? PIPELINE_ACTION_FORWARD : PIPELINE_ACTION_LOCAL_IN;
     }
 
     iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-    fl4.dst_addr = rte_be_to_cpu_32(iph->dst_addr);
+    fl4.dst_addr = iph->dst_addr;
     rt_entry = route_ingress_lockup(&fl4);
     if (NULL == rt_entry) {
-        RTE_LOG(ERR, ROUTE, "No route found for dst %u.%u.%u.%u\n",
-                fl4.dst_addr & 0xff, (fl4.dst_addr >> 8) & 0xff, (fl4.dst_addr >> 16) & 0xff,
-                (fl4.dst_addr >> 24) & 0xff);
+        RTE_LOG(ERR, ROUTE, "No route to dst %s, drop it.\n", be_ip_to_str(fl4.dst_addr));
         return PIPELINE_ACTION_DROP;
     } else {
         rt->mtu = rt_entry->mtu;
         rt->gw = rt_entry->gw;
         rt->port = rt_entry->port;
         rt->flags = rt_entry->flags;
-        return PIPELINE_ACTION_OUTPUT;
+        return (rt->flags & RTF_FORWARD) ? PIPELINE_ACTION_FORWARD : PIPELINE_ACTION_LOCAL_IN;
     }
 }
 
@@ -154,7 +152,7 @@ void route_module_init(int socket_id) {
     struct rte_lpm_config lpm_cfg;
 
     for (i = 0; i < ROUTE_TABLE_BUCKETS; i++) {
-        INIT_LIST_HEAD(&g_route_table_hash[i]);
+        INIT_LIST_HEAD(&route_table[i]);
     }
 
     snprintf(name, sizeof (name), "route_table_%d", socket_id);
@@ -162,8 +160,8 @@ void route_module_init(int socket_id) {
     lpm_cfg.max_rules = MAX_ROUTES;
     lpm_cfg.number_tbl8s = NUMBER_TBL8;
 
-    g_route_table_lpm = rte_lpm_create(name, socket_id, &lpm_cfg);
-    if (NULL == g_route_table_lpm) {
+    lpm_table = rte_lpm_create(name, socket_id, &lpm_cfg);
+    if (NULL == lpm_table) {
         rte_exit(EXIT_FAILURE, "Create route table in socket %d failed, %s.",
                  socket_id, rte_strerror(rte_errno));
     }

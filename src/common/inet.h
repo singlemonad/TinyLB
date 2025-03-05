@@ -7,7 +7,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_ip.h>
-#include "../common/skb.h"
+#include "skb.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -17,12 +17,6 @@ typedef struct sk_buff {
     struct rte_mbuf mbuf;
 }sk_buff_t;
 
-typedef struct per_cpu_ctx{
-    uint8_t l4_proto;
-    struct ct_session *ct;
-    struct ct_tuple_hash *tuple_hash;
-}per_cpu_ctx_t;
-
 #define PKT_HEADROOM \
     (int)(RTE_PKTMBUF_HEADROOM - (sizeof(struct sk_buff) - sizeof(struct rte_mbuf)))
 

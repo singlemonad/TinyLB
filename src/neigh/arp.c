@@ -10,7 +10,7 @@
 #include "arp.h"
 #include "neigh.h"
 #include "../common/log.h"
-#include "../ipv4/inet.h"
+#include "../common/inet.h"
 
 static int arp_rcv(sk_buff_t *skb) {
     struct rte_arp_hdr *arp = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_arp_hdr*);
@@ -29,13 +29,13 @@ static int arp_rcv(sk_buff_t *skb) {
         list_for_each_entry(neigh_mbuf, &neighbor->wait_pkt, neigh_mbuf_node) {
             struct dev_port *port = get_port_by_id(skb->mbuf.port);
             neigh_fill_mac(neigh_mbuf->skb, neighbor, port);
-            dev_port_xmit(neigh_mbuf->skb, port);
+            dev_port_xmit(port, neigh_mbuf->skb);
         }
         return NAT_LB_OK;
     } else {
         int ret = neighbor_add(arp_sip, &arp->arp_data.arp_sha);
         if (NAT_LB_OK != ret) {
-            RTE_LOG(ERR, IPV4, "Neighbor add failed.\n");
+            RTE_LOG(ERR, IP, "Neighbor add failed.\n");
             return ret;
         }
     }

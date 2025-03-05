@@ -4,8 +4,8 @@
 
 #include <linux/if_ether.h>
 #include "inet.h"
-#include "../common/util.h"
-#include "../common/log.h"
+#include "util.h"
+#include "log.h"
 
 enum l3_handler_type {
     L3_HANDLER_ARP = 0,
@@ -50,7 +50,7 @@ static int l3_deliver_skb(sk_buff_t *skb) {
     } else if (eth_hdr->ether_type == rte_cpu_to_be_16(ETH_P_ARP)) {
         l3_handler_idx = L3_HANDLER_ARP;
     } else {
-        RTE_LOG(ERR, DEV, "No l3 rcv for pkt type %d.\n", rte_be_to_cpu_16(eth_hdr->ether_type));
+        RTE_LOG(ERR, IP, "No l3 rcv for pkt type %d.\n", rte_be_to_cpu_16(eth_hdr->ether_type));
         goto drop;
     }
 

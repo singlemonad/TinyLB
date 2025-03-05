@@ -26,8 +26,14 @@ enum {
     NAT_LB_NO_SNAT_PORT = -7,
 };
 
-void show_pkt(sk_buff_t *pkt);
-uint32_t ip_to_int(char *str);
-void show_ip(rte_be32_t addr);
+#define LOG_BUFF(name) \
+    char name[1024]; memset(name, 0, 1024)
+
+void print_pkt(sk_buff_t *pkt);
+void print_ip(rte_be32_t addr);
+uint32_t be_ip_to_int(char *str);
+char* ip_to_str(uint32_t ip);
+char* be_ip_to_str(uint32_t ip);
+char* protocol_to_str(uint8_t proto);
 
 #endif //NAT_LB_UTIL_H

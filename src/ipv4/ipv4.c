@@ -6,15 +6,14 @@
 #include <linux/if_ether.h>
 #include "../common/util.h"
 #include "../common/log.h"
-#include "ipv4.h"
-#include "inet.h"
-#include "../acl/acl.h"
+#include "../common/inet.h"
 #include "../lb/svc.h"
-#include "../lb/sa_pool.h"
-#include "../arp/neigh.h"
+#include "../neigh/neigh.h"
 #include "../common/pipeline.h"
-#include "inet.h"
+#include "../common/thread.h"
+#include "ipv4.h"
 
+extern __thread struct per_lcore_ct_ctx per_lcore_ctx;
 static struct l4_handler* l4_handlers[IPPROTO_MAX];
 
 static int ipv4_hdr_len(struct rte_ipv4_hdr *iph) {
@@ -23,14 +22,13 @@ static int ipv4_hdr_len(struct rte_ipv4_hdr *iph) {
 
 static int ipv4_local_in(sk_buff_t *skb) {
     struct rte_ipv4_hdr *iph;
-    unsigned char next_proto;
     struct l4_handler* proto;
 
     iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
 
-    next_proto = iph->next_proto_id;
-    proto = l4_handlers[next_proto];
+    proto = l4_handlers[iph->next_proto_id];
     if (NULL == proto) {
+        RTE_LOG(ERR, IP, "No l4 handler for protocol %d(%s).\n", iph->next_proto_id, protocol_to_str(iph->next_proto_id));
         goto drop;
     }
 
@@ -44,26 +42,90 @@ drop:
     return NAT_LB_OK;
 }
 
-static int ipv4_rcv_finish(sk_buff_t *skb) {
-    struct rte_ipv4_hdr *iph;
-    pipeline_actions action;
-    struct per_cpu_ctx *ctx;
+static int ipv4_pipeline(sk_buff_t *skb) {
+    int ret;
     struct rt_cache *rt;
+    pipeline_actions action;
+    struct per_lcore_ct_ctx *ctx;
 
+    ctx = &per_lcore_ctx;
     action = run_pipeline_for_skb(skb);
-    if (PIPELINE_ACTION_DROP == action) {
-        goto drop;
-    } else if (PIPELINE_ACTION_OUTPUT == action) {
-        ctx = get_per_cpu_ctx();
-        rt = ct_ext_data_get(CT_EXT_ROUTE, ctx->ct);
-        if (rt->flags & RTF_LOCAL) {
-            ipv4_local_in(skb);
-        } else if (rt->flags & RTF_FORWARD) {
-            ipv4_output(skb, rt);
-        }
-        put_per_cpu_ctx();
+    switch (action) {
+        case PIPELINE_ACTION_FORWARD:
+            rt = ct_ext_data_get(CT_EXT_ROUTE, ctx->ct);
+            ret = ipv4_output(skb, rt);
+            break;
+        case PIPELINE_ACTION_LOCAL_IN:
+            ret = ipv4_local_in(skb);
+            break;
+        default:
+            goto drop;
     }
+
+    return ret;
+
+    drop:
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
     return NAT_LB_OK;
+}
+
+static int ipv4_forward(sk_buff_t *skb) {
+    struct flow4 fl4;
+    struct rte_ipv4_hdr *iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+
+    memset(&fl4, 0, sizeof(struct flow4));
+    fl4.src_addr = iph->dst_addr;
+    fl4.dst_addr = iph->src_addr;
+    fl4.flc.proto = iph->next_proto_id;
+
+    struct route_entry *rt_entry = route_egress_lockup(&fl4);
+    if (NULL == rt_entry) {
+        RTE_LOG(ERR, IP, "No route to dst %s, drop it.\n", be_ip_to_str(fl4.dst_addr));
+        goto drop;
+    }
+
+    iph->time_to_live -= 1;
+    iph->hdr_checksum = 0;
+    iph->hdr_checksum = rte_ipv4_cksum(iph);
+
+    uint32_t next_hop = iph->dst_addr;
+    if (rt_entry->gw != 0) {
+        next_hop = rt_entry->gw;
+    }
+
+    skb->mbuf.packet_type = RTE_ETHER_TYPE_IPV4;
+    skb->mbuf.port = rt_entry->port->port_id;
+
+    return neigh_output(next_hop, skb, rt_entry->port);
+
+drop:
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
+    return NAT_LB_OK;
+}
+
+static int ipv4_rcv_finish(sk_buff_t *skb) {
+    struct per_lcore_ct_ctx *ctx;
+    struct flow4 fl4;
+    struct rte_ipv4_hdr *iph;
+
+    ctx = &per_lcore_ctx;
+    if (ctx->l4_proto == IPPROTO_TCP || ctx->l4_proto == IPPROTO_UDP || ctx->l4_proto == IPPROTO_ICMP) {
+        return ipv4_pipeline(skb);
+    } else {
+        iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+        fl4.dst_addr = iph->dst_addr;
+
+        struct route_entry* rt_entry = route_ingress_lockup(&fl4);
+        if (NULL == rt_entry) {
+            RTE_LOG(ERR, IP, "No route to dst %s, drop it.\n", be_ip_to_str(fl4.dst_addr));
+            goto drop;
+        }
+        if (rt_entry->flags & RTF_LOCAL) {
+            return ipv4_local_in(skb);
+        } else if (rt_entry->flags & RTF_FORWARD) {
+            return ipv4_forward(skb);
+        }
+    }
 
 drop:
     rte_pktmbuf_free((struct rte_mbuf*)skb);
@@ -71,52 +133,47 @@ drop:
 }
 
 static int ipv4_rcv(sk_buff_t *skb) {
-    int ret;
     uint16_t iph_len, len;
     struct rte_ipv4_hdr *iph;
-    per_cpu_ctx_t *ctx;
-    struct ct_session *ct;
+    struct per_lcore_ct_ctx *ctx;
 
     iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-
-    if (iph->next_proto_id == IPPROTO_ICMP) {
-        goto drop;
-    }
-
     iph_len = ipv4_hdr_len(iph);
-    if (((iph->version_ihl) >> 4 ) != 4 || iph_len < sizeof(struct rte_ipv4_hdr)) {
+    if ((iph->version_ihl >> 4) != 4) {
+        RTE_LOG(ERR, IP, "Not IPv4 pkt, drop it.\n");
         goto drop;
     }
-
+    if (iph_len < sizeof(struct rte_ipv4_hdr)) {
+        RTE_LOG(ERR, IP, "IPv4 pkt header not complete, drop it.\n");
+    }
     if (rte_raw_cksum(iph, iph_len) != 0xFFFF) {
+        RTE_LOG(ERR, IP, "IPv4 pkt Checksum error, drop it.\n");
         goto drop;
     }
 
     len = ntohs(iph->total_length);
     if (skb->mbuf.pkt_len < len || len < iph_len) {
+        RTE_LOG(ERR, IP, "IPv4 pkt body not complete, drop it.\n");
         goto drop;
     }
-
     if (skb->mbuf.pkt_len > len) {
         if(rte_pktmbuf_trim((struct rte_mbuf*)skb, skb->mbuf.pkt_len - len) != 0) {
             goto drop;
         }
     }
 
-    skb->mbuf.l3_len = iph_len;
-
-    ctx = get_per_cpu_ctx();
-    ctx->l4_proto = iph->next_proto_id;
-
-    ret = ipv4_rcv_finish(skb);
-    if (NAT_LB_OK != ret) {
+    if (iph->next_proto_id == IPPROTO_ICMP) {
         goto drop;
     }
-    return NAT_LB_OK;
+
+    ctx = &per_lcore_ctx;
+    skb->mbuf.l3_len = iph_len;
+    ctx->l4_proto = iph->next_proto_id;
+
+    return ipv4_rcv_finish(skb);
 
 drop:
     rte_pktmbuf_free((struct rte_mbuf*)skb);
-
     return NAT_LB_OK;
 }
 
@@ -149,16 +206,16 @@ drop:
     return NAT_LB_OK;
 }
 
+
 int ipv4_local_out(sk_buff_t *skb, struct flow4 *fl4) {
     struct rte_ipv4_hdr *iph;
     struct route_entry *rt_entry;
 
-    fl4->dst_addr = rte_be_to_cpu_32(fl4->dst_addr);
     rt_entry = route_egress_lockup(fl4);
     if (NULL == rt_entry) {
-        goto no_route;
+        RTE_LOG(ERR, IP, "No route to dst %s, drop it.\n", be_ip_to_str(fl4->dst_addr));
+        goto drop;
     }
-    fl4->dst_addr = rte_cpu_to_be_32(fl4->dst_addr);
 
     iph = (struct rte_ipv4_hdr*)rte_pktmbuf_prepend((struct rte_mbuf*)skb, sizeof(struct rte_ipv4_hdr));
     iph->version_ihl = ((4 << 4) | 5);
@@ -170,7 +227,6 @@ int ipv4_local_out(sk_buff_t *skb, struct flow4 *fl4) {
     iph->hdr_checksum = 0;
     iph->hdr_checksum = rte_ipv4_cksum(iph);
 
-    // next hop
     uint32_t next_hop = iph->dst_addr;
     if (rt_entry->gw != 0) {
         next_hop = rt_entry->gw;
@@ -181,12 +237,8 @@ int ipv4_local_out(sk_buff_t *skb, struct flow4 *fl4) {
 
     return neigh_output(next_hop, skb, rt_entry->port);
 
-no_route:
-    fprintf(stderr, "No route, %s, dst %u.%u.%u.%u.\n",
-            __func__, fl4->dst_addr & 0xff, ( fl4->dst_addr>>8) & 0xff, ( fl4->dst_addr>>16) & 0xff, (fl4->dst_addr>>24) & 0xff);
 drop:
     rte_pktmbuf_free((struct rte_mbuf*)skb);
-
     return NAT_LB_OK;
 }
 
@@ -196,7 +248,6 @@ int inet_register_l4_handler(struct l4_handler *proto, unsigned char protocol) {
     }
 
     l4_handlers[protocol] = proto;
-
     return NAT_LB_OK;
 }
 

@@ -11,7 +11,7 @@
 #include <rte_common.h>
 #include "../common/list.h"
 #include "../common/skb.h"
-#include "../arp/arp.h"
+#include "../neigh/arp.h"
 
 #ifdef __cplusplus
 extern "C" {

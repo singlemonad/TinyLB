@@ -12,12 +12,12 @@
 
 static struct list_head g_neigh_table[NEIGH_BUCKETS];
 
-static int get_neigh_hash(uint32_t next_hop) {
-    return (int)next_hop % NEIGH_BUCKETS;
+static uint get_neigh_hash(uint32_t next_hop) {
+    return next_hop % NEIGH_BUCKETS;
 }
 
 int neighbor_add(uint32_t next_hop, struct rte_ether_addr *mac) {
-    int hash;
+    uint hash;
     struct neighbor *neighbor;
 
     hash = get_neigh_hash(next_hop);
@@ -94,7 +94,7 @@ static int neigh_solicit(struct neighbor *neighbor, sk_buff_t *skb, struct dev_p
 
     neigh_mbuf = rte_zmalloc("neigh mbuf", sizeof(struct neigh_mbuf), RTE_CACHE_LINE_SIZE);
     if (NULL == neigh_mbuf) {
-        RTE_LOG(ERR, IPV4, "No memory: %s\n", __func__ );
+        RTE_LOG(ERR, IP, "No memory: %s\n", __func__ );
         return NAT_LB_NOMEM;
     }
 
@@ -107,15 +107,15 @@ static int neigh_solicit(struct neighbor *neighbor, sk_buff_t *skb, struct dev_p
 
 int neigh_output(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port) {
     struct neighbor *neighbor;
-    int hash;
+    uint hash;
 
     neighbor = neighbor_lookup(next_hop);
     if (NULL == neighbor) {
-        RTE_LOG(INFO, IPV4, "No neighbor to %u.%u.%u.%u, solicit it.\n", next_hop & 0xff, (next_hop>>8) & 0xff, (next_hop>>16) & 0xff, (next_hop>>24) & 0xff);
+        RTE_LOG(INFO, IP, "No neighbor to %s, solicit it.\n", ip_to_str(next_hop));
 
         neighbor = rte_zmalloc("neigh", sizeof(struct neighbor), RTE_CACHE_LINE_SIZE);
         if (NULL == neighbor) {
-            RTE_LOG(ERR, IPV4, "No memory: %s\n", __func__ );
+            RTE_LOG(ERR, IP, "No memory: %s\n", __func__ );
             return NAT_LB_NOMEM;
         }
         neighbor->state = NEIGHBOR_INIT;
@@ -129,7 +129,7 @@ int neigh_output(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port) {
         return neigh_solicit(neighbor, skb, port);
     } else {
         neigh_fill_mac(skb, neighbor, port);
-        dev_port_xmit(skb, port);
+        dev_port_xmit(port, skb);
 
         return NAT_LB_OK;
     }

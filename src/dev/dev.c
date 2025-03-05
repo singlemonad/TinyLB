@@ -5,6 +5,7 @@
 #include <rte_ethdev.h>
 #include <rte_malloc.h>
 #include "../common/util.h"
+#include "../common/log.h"
 #include "dev.h"
 
 #define PORT_TABLE_BUCKETS 16
@@ -142,7 +143,7 @@ static struct dev_port* dev_port_alloc(void) {
 
     port = rte_zmalloc("dev_port", sizeof(struct dev_port), RTE_CACHE_LINE_SIZE);
     if (port == NULL) {
-        RTE_LOG(ERR, PORT, "No memory: %s", __func__);
+        RTE_LOG(ERR, DEV, "No memory: %s\n", __func__);
         return port;
     }
     return port;
@@ -221,8 +222,8 @@ static int dev_port_hard_xmit(struct dev_port *port, sk_buff_t *skb) {
     }
 
 #ifdef SHOW_TX_PKT
-    RTE_LOG(INFO, PORT, "Tx one pkt, dev_port %d.\n", port->port_id);
-    show_pkt(skb);
+    RTE_LOG(INFO, DEV, "Tx one pkt, dev_port %d.\n", port->port_id);
+    print_pkt(skb);
 #endif
 
     ops = port->ops;
@@ -231,7 +232,7 @@ static int dev_port_hard_xmit(struct dev_port *port, sk_buff_t *skb) {
     }
 
     qid = get_tx_queue_id(port, skb);
-    tx_n = rte_eth_tx_burst(port->port_id, qid, (struct rte_mbuf**)skb, 1);
+    tx_n = rte_eth_tx_burst(port->port_id, qid, (struct rte_mbuf**)&skb, 1);
     if (tx_n != 1) {
         rte_pktmbuf_free((struct rte_mbuf*)skb);
     }
@@ -262,7 +263,7 @@ uint16_t dev_port_rx_burst(uint16_t port_id, uint16_t queue_id, sk_buff_t **mbuf
     int idx;
     for (idx = 0; idx < rx_n; idx++) {
         RTE_LOG(INFO, PORT, "Rcv one pkt\n");
-        show_pkt(mbufs[idx]);
+        print_pkt(mbufs[idx]);
     }
 #endif
 
@@ -312,5 +313,5 @@ void dev_port_start(uint16_t port_id) {
         rte_exit(EXIT_FAILURE, "Enable promiscuous dev_port %d failed, %s.", port->port_id, rte_strerror(rte_errno));
     }
 
-    RTE_LOG(INFO, PORT, "Start dev_port %d success.\n", port->port_id);
+    RTE_LOG(INFO, DEV, "Start dev_port %d success.\n", port->port_id);
 }

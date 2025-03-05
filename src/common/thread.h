@@ -71,8 +71,13 @@ struct thread {
     thread_work_func work_func;
 };
 
-struct thread* create_rx_thread(struct rx_thread_cfg* cfg);
+struct per_lcore_ct_ctx{
+    uint16_t l4_proto;
+    struct ct_session *ct;
+    struct ct_tuple_hash *tuple_hash;
+};
 
+struct thread* create_rx_thread(struct rx_thread_cfg* cfg);
 void lcore_add_thread(uint16_t lcore_id, struct thread* thread);
 void start_lcore(uint16_t lcore_id);
 

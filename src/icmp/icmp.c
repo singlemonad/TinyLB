@@ -8,9 +8,6 @@
 #include <rte_icmp.h>
 #include "icmp.h"
 #include "../common/util.h"
-#include "../ipv4/inet.h"
-#include "../ct/flow.h"
-#include "../dev/dev.h"
 #include "../ipv4/ipv4.h"
 
 #define MAX_ICMP_CTRL
@@ -33,12 +30,9 @@ static int icmp_echo(sk_buff_t *skb, struct rte_ipv4_hdr *iph) {
     memset(&fl4, 0, sizeof(struct flow4));
     fl4.src_addr = iph->dst_addr;
     fl4.dst_addr = iph->src_addr;
-    fl4.flc.flc_oif = get_port_by_id(skb->mbuf.port);
     fl4.flc.proto = IPPROTO_ICMP;
 
     return ipv4_local_out(skb, &fl4);
-
-    return NAT_LB_OK;
 }
 
 static struct icmp_handler icmp_ctrl[MAX_ICMP_CTRL] = {

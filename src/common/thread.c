@@ -6,12 +6,18 @@
 #include <rte_log.h>
 #include "thread.h"
 #include "log.h"
-#include "../dev/dev.h"
+#include "inet.h"
 
 #define MAX_LCORE 16
 #define MAX_THREAD_PER_LCORE 64
 
 static struct thread* lcore_2_threads[MAX_LCORE][MAX_THREAD_PER_LCORE];
+
+__thread struct per_lcore_ct_ctx per_lcore_ctx = {
+        .l4_proto = 0,
+        .ct = NULL,
+        .tuple_hash = NULL,
+};
 
 static void rx_thread_work_func(struct thread_cfg *cfg) {
     struct rx_thread_cfg *rx_cfg = (struct rx_thread_cfg*)cfg;
@@ -24,17 +30,19 @@ static void rx_thread_work_func(struct thread_cfg *cfg) {
 
         n_rx = dev_port_rx_burst(port_id, queue_id, (struct sk_buff **) &rx_cfg->queues[idx].mbufs);
         if (0 != n_rx) {
-            RTE_LOG(INFO, DEV, "Receive %d pkt.\n", n_rx);
+            // RTE_LOG(INFO, RX, "Receive %d pkt.\n", n_rx);
         }
 
-        // TODO deliver pkt
+        for (int i = 0; i < n_rx; i++) {
+            inet_pkt_rcv(rx_cfg->queues[idx].mbufs[i]);
+        }
     }
 }
 
 struct thread* create_rx_thread(struct rx_thread_cfg *cfg) {
     struct thread* t = rte_malloc("thread", sizeof(struct thread), RTE_CACHE_LINE_SIZE);
     if (NULL == t) {
-        RTE_LOG(ERR, EAL, "No memory, %s.", __func__ );
+        RTE_LOG(ERR, EAL, "No memory, %s.\n", __func__ );
         return NULL;
     }
 

@@ -6,10 +6,11 @@
 #include "acl.h"
 #include "../common/skb.h"
 #include "../common/pipeline.h"
-
+#include "../common/thread.h"
 
 #define MAX_ACL_RULE 512
 
+extern __thread struct per_lcore_ct_ctx per_lcore_ctx;
 static struct rte_acl_ctx *g_ingress_acl;
 static struct rte_acl_ctx *g_egress_acl;
 
@@ -76,13 +77,13 @@ int ingress_acl_match(struct ipv4_3tuple *fields) {
 }
 
 static pipeline_actions ingress_acl_in(sk_buff_t *skb) {
-    struct per_cpu_ctx *ctx;
+    struct per_lcore_ct_ctx *ctx;
     struct rte_ipv4_hdr *iph;
     struct ipv4_3tuple match;
     int acl_action;
     int *acl_ext;
 
-    ctx = get_per_cpu_ctx();
+    ctx = &per_lcore_ctx;
     if (ctx->ct->state == CT_NEW) {
         iph = rte_pktmbuf_mtod((struct rte_mbuf *) skb, struct rte_ipv4_hdr*);
         match.proto = iph->next_proto_id;

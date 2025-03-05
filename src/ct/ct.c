@@ -2,88 +2,31 @@
 // Created by tedqu on 24-9-15.
 //
 
-#include <netinet/tcp.h>
 #include <pthread.h>
 #include <rte_mbuf.h>
 #include <rte_malloc.h>
 #include <rte_ip.h>
 #include <rte_hash_crc.h>
 #include "../common/util.h"
-#include "ct.h"
 #include "../common/pipeline.h"
 #include "../common/log.h"
 #include "../common/jiffies.h"
+#include "ct.h"
 
 #define MAX_CT_BUCKETS 512
 
-static const uint8_t tcp_ct_state_transfer_map[CT_DRI_COUNT][TCP_BIT_MAX][TCP_CT_MAX] = {
-/* original */
-        {
-                /* sNO、sSS、sSR、sES、sFW、sCW、sLA、sTM、sCL、sS2 */
-/* SYN */       {sSS, sSS, sSR, sES, sFW, sCW, sLA, sSS, sSS, sS2},
-/* SYNACK */    { sNO, sSS, sSR, sES, sFW, sCW, sLA, sTW, sCL, sSR},
-/* FIN */      { sNO, sSS, sFW, sFW, sLA, sLA, sLA, sTW, sCL, sS2 },
-/* ACK */       { sES, sS2, sES, sES, sCW, sCW, sTW, sTW, sCL, sS2 },
-/* RST */        { sNO, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL },
-/* NONE*/    { sNO, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL }
-        },
+extern __thread struct per_lcore_ct_ctx per_lcore_ctx;
 
-/* reply */
-        {
-/* SYN */     { sNO, sS2, sSR, sES, sFW, sCW, sLA, sTW, sCL, sS2 },
-/* SYNACK */   { sNO, sSR, sSR, sES, sFW, sCW, sLA, sTW, sCL, sSR },
-/* FIN */      { sNO, sSS, sFW, sFW, sLA, sLA, sLA, sTW, sCL, sS2 },
-/* ACK */      { sNO, sSS, sSR, sES, sCW, sCW, sTW, sTW, sCL, sS2 },
-/* RST*/       { sNO, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL, sCL },
-/* none */    { sNO, sSS, sSR, sES, sFW, sCW, sLA, sTW, sCL, sS2 }
-        }
-};
-
-static const char *tcp_state_name[] = {
-        [sNO] = "NONE",
-        [sSS] = "SYN_SENT",
-        [sSR] = "SYN_RCV",
-        [sES] = "ESTABLISHED",
-        [sFW] = "FIN_WAIT",
-        [sCW] = "CLOSE_WAIT",
-        [sLA] = "LAST_ACK",
-        [sTW] = "TIME_WAIT",
-        [sCL] = "CLOSE",
-        [sS2] = "SYN_SENT2",
-};
-
-#define HZ	1000
-#define SECS * HZ
-#define MINUTES * 60 SECS
-#define HOURS * 60 MINUTES
-
-static unsigned int tcp_timeouts[TCP_CT_MAX] = {
-        [TCP_CT_NONE]		= 0 SECS,
-        [TCP_CT_SYN_SEND]	= 60 SECS,
-        [TCP_CT_SYN_RCV]	= 60 SECS,
-        [TCP_CT_ESTABLISHED]	= 3 HOURS,
-        [TCP_CT_FIN_WAIT]	= 2 MINUTES,
-        [TCP_CT_CLOSE_WAIT]	= 60 SECS,
-        [TCP_CT_LAST_ACK]	= 30 SECS,
-        [TCP_CT_TIME_WAIT]	= 2 MINUTES,
-        [TCP_CT_CLOSE]		= 10 SECS,
-        [TCP_CT_SYN_SEND2]	= 60 SECS,
-};
-
-static unsigned int udp_timeouts[UDP_CT_MAX] = {
-        [UDP_CT_NONE]		= 0 SECS,
-        [UDP_CT_NORMAL]		= 3 MINUTES,
-};
-
-static struct list_head ct_table[MAX_CT_BUCKETS];
-
-__thread per_cpu_ctx_t g_per_cpu_ctx = {
-        .ct = NULL,
-        .tuple_hash = NULL,
-        .l4_proto = 0,
-};
+extern struct ct_l4_proto tcp_l4_proto;
+extern struct ct_l4_proto udp_l4_proto;
+extern struct ct_l4_proto icmp_l4_proto;
 
 static struct ct_ext ct_extensions[MAX_CT_ACTION];
+
+static struct ct_l4_proto ct_l4_handlers[IPPROTO_MAX];
+
+static RTE_DEFINE_PER_LCORE(struct list_head, ct_table[MAX_CT_BUCKETS]);
+#define local_ct_tbl (RTE_PER_LCORE(ct_table))
 
 void ct_ext_register(uint8_t index, uint32_t length) {
     uint32_t offset = 0;
@@ -115,65 +58,15 @@ static uint32_t ct_ext_get_total_length(void) {
     return length;
 }
 
-static unsigned int ct_get_tcp_index(struct tcphdr *tcp) {
-    if (tcp->rst) {
-        return TCP_RST_SET;
-    }
-    if (tcp->syn) {
-        if (tcp->ack) {
-            return TCP_SYNACK_SET;
-        }
-        return TCP_SYN_SET;
-    }
-    if (tcp->fin) {
-        return TCP_FIN_SET;
-    }
-    if (tcp->ack) {
-        return TCP_ACK_SET;
-    }
-    return TCP_NONE_SET;
-}
-
-static struct ct_tuple ct_skb_to_tuple(sk_buff_t *skb, bool reverse) {
+static void ct_fill_tuple(sk_buff_t *skb, struct ct_session *ct) {
     struct rte_ipv4_hdr *iph;
-    struct rte_icmp_hdr *icmp;
-    struct ct_tuple tuple;
-    uint16_t *ports;
+    struct ct_l4_proto *handler;
 
     iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-    tuple.proto = iph->next_proto_id;
-    if (!reverse) {
-        tuple.src_addr = iph->src_addr;
-        tuple.dst_addr = iph->dst_addr;
-        if (IPPROTO_ICMP == iph->next_proto_id) {
-            icmp = (struct rte_icmp_hdr *) &iph[1];
-            tuple.icmp.type = icmp->icmp_type;
-            tuple.icmp.code = icmp->icmp_code;
-        } else {
-            ports = (uint16_t *) &iph[1];
-            tuple.ports.src_port = ports[0];
-            tuple.ports.dst_port = ports[1];
-        }
-    } else {
-        tuple.src_addr = iph->dst_addr;
-        tuple.dst_addr = iph->src_addr;
-        if (IPPROTO_ICMP == ntohs(iph->next_proto_id)) {
-            icmp = (struct rte_icmp_hdr *) &iph[1];
-            tuple.icmp.type = icmp->icmp_type;
-            tuple.icmp.code = icmp->icmp_code;
-        } else {
-            ports = (uint16_t *)&iph[1];
-            tuple.ports.src_port = ports[1];
-            tuple.ports.dst_port = ports[0];
-        }
-    }
-    return tuple;
-}
-
-static void ct_fill_tuple(sk_buff_t *skb, struct ct_session *ct) {
-    ct->tuple_hash[CT_DRI_ORIGINAL].tuple = ct_skb_to_tuple(skb, false);
+    handler = &ct_l4_handlers[iph->next_proto_id];
+    ct->tuple_hash[CT_DRI_ORIGINAL].tuple = handler->gen_tuple(skb, false);
     ct->tuple_hash[CT_DRI_ORIGINAL].tuple.dir = CT_DRI_ORIGINAL;
-    ct->tuple_hash[CT_DRI_REPLY].tuple = ct_skb_to_tuple(skb, true);
+    ct->tuple_hash[CT_DRI_REPLY].tuple = handler->gen_tuple(skb, true);
     ct->tuple_hash[CT_DRI_REPLY].tuple.dir = CT_DRI_REPLY;
 }
 
@@ -183,12 +76,32 @@ static uint32_t ct_get_tuple_hash(struct ct_tuple tuple) {
     return rte_hash_crc_4byte(hash1, hash2) % MAX_CT_BUCKETS;
 }
 
+static char* ct_tuple_to_str(struct ct_tuple *tuple, char *buff) {
+    if (tuple->proto == IPPROTO_TCP || tuple->proto == IPPROTO_UDP) {
+        sprintf(buff, "proto:%s,src_ip:%s", protocol_to_str(tuple->proto), be_ip_to_str(tuple->src_addr));
+        sprintf(buff, "%s,dst_ip:%s,src_port:%d,dst_port:%d", buff, be_ip_to_str(tuple->dst_addr), rte_be_to_cpu_16(tuple->ports.src_port), rte_be_to_cpu_16(tuple->ports.dst_port));
+    } else if (tuple->proto == IPPROTO_ICMP) {
+        sprintf(buff, "proto:%s,src_ip:%s", protocol_to_str(tuple->proto), be_ip_to_str(tuple->src_addr));
+        sprintf(buff, "%s,dst_ip:%s,type:%d,code:%d", buff, be_ip_to_str(tuple->dst_addr), tuple->icmp.type, tuple->icmp.code);
+    }
+    return buff;
+}
+
+char* ct_to_str(struct ct_session* ct, char *buff) {
+    LOG_BUFF(orig_buf);
+    LOG_BUFF(reply_buf);
+    sprintf(buff, "original<%s>,reply<%s>",
+            ct_tuple_to_str(&ct->tuple_hash[CT_DRI_ORIGINAL].tuple, orig_buf),
+            ct_tuple_to_str(&ct->tuple_hash[CT_DRI_REPLY].tuple, reply_buf));
+    return buff;
+}
+
 static struct ct_session* ct_alloc(void) {
     struct ct_session *ct;
 
     ct = rte_zmalloc("ct", sizeof(struct ct_session) + ct_ext_get_total_length(), RTE_CACHE_LINE_SIZE);
     if (NULL == ct) {
-        RTE_LOG(ERR, LB, "No memory, %s\n", __func__ );
+        RTE_LOG(ERR, CT, "No memory, %s\n", __func__ );
         return NULL;
     }
     return ct;
@@ -226,29 +139,14 @@ static void ct_deref(struct ct_session *ct) {
     }
 }
 
-struct per_cpu_ctx *get_per_cpu_ctx(void) {
-    return &g_per_cpu_ctx;
+static void ct_insert_original(struct ct_session *ct) {
+    uint32_t hash = ct_get_tuple_hash(ct->tuple_hash[CT_DRI_ORIGINAL].tuple);
+    list_add(&ct->tuple_hash[CT_DRI_ORIGINAL].tuple_node, &local_ct_tbl[hash]);
 }
 
-void put_per_cpu_ctx(void) {
-    struct per_cpu_ctx *ctx;
-
-    ctx = get_per_cpu_ctx();
-    assert(NULL != ctx->ct);
-    ct_deref(ctx->ct);
-    ctx->ct = NULL;
-    ctx->tuple_hash = NULL;
-    ctx->l4_proto = 0;
-}
-
-static void ct_insert(struct ct_session *ct) {
-    uint32_t orig_hash, reply_hash;
-
-    ct_ref(ct);
-    orig_hash = ct_get_tuple_hash(ct->tuple_hash[CT_DRI_ORIGINAL].tuple);
-    list_add(&ct->tuple_hash[CT_DRI_ORIGINAL].tuple_node, &ct_table[orig_hash]);
-    reply_hash = ct_get_tuple_hash(ct->tuple_hash[CT_DRI_REPLY].tuple);
-    list_add(&ct->tuple_hash[CT_DRI_REPLY].tuple_node, &ct_table[reply_hash]);
+static void ct_insert_reply(struct ct_session *ct) {
+    uint32_t hash = ct_get_tuple_hash(ct->tuple_hash[CT_DRI_REPLY].tuple);
+    list_add(&ct->tuple_hash[CT_DRI_REPLY].tuple_node, &local_ct_tbl[hash]);
 }
 
 static void ct_delete(struct ct_session *ct) {
@@ -263,6 +161,7 @@ static void ct_timeout(struct rte_timer *timer, void *arg) {
     ct = container_of(timer, struct ct_session, timer);
     rte_timer_stop(timer);
     ct_delete(ct);
+    ct_deref(ct);
 }
 
 static void ct_mod_timer(struct ct_session *ct) {
@@ -274,116 +173,93 @@ static void ct_mod_timer(struct ct_session *ct) {
     }
 }
 
-static struct ct_session* ct_find(sk_buff_t *skb, per_cpu_ctx_t *ctx) {
-    struct ct_tuple tuple;
-    uint32_t hash;
-    struct ct_tuple_hash *tuple_hash;
-    struct ct_session *ct;
-    struct rte_ipv4_hdr *iph;
+static struct ct_session* ct_find(sk_buff_t *skb, struct per_lcore_ct_ctx *ctx) {
+    struct rte_ipv4_hdr *iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+    struct ct_tuple tuple = ct_l4_handlers[iph->next_proto_id].gen_tuple(skb, false);
 
-    tuple = ct_skb_to_tuple(skb, false);
-    hash = ct_get_tuple_hash(tuple);
-    list_for_each_entry(tuple_hash, &ct_table[hash], tuple_node) {
+    struct ct_tuple_hash *tuple_hash;
+    list_for_each_entry(tuple_hash, &local_ct_tbl[ct_get_tuple_hash(tuple)], tuple_node) {
         if (tuple_hash->tuple.src_addr == tuple.src_addr &&
         tuple_hash->tuple.dst_addr == tuple.dst_addr) {
-            iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-            if (tuple.proto != iph->next_proto_id) {
-                continue;
-            }
-            if (IPPROTO_ICMP == iph->next_proto_id) {
-                if (tuple_hash->tuple.icmp.type == tuple.icmp.type &&
-                tuple_hash->tuple.icmp.code == tuple.icmp.code) {
+            if (tuple.proto == iph->next_proto_id &&
+            ct_l4_handlers[iph->next_proto_id].is_tuple_equal(tuple_hash, &tuple)) {
                     ctx->tuple_hash = tuple_hash;
                     return TUPLE_TO_CT(tuple_hash);
-                }
-            } else {
-                if (tuple_hash->tuple.ports.src_port == tuple.ports.src_port &&
-                tuple_hash->tuple.ports.dst_port == tuple.ports.dst_port) {
-                    ctx->tuple_hash = tuple_hash;
-                    return TUPLE_TO_CT(tuple_hash);
-                }
             }
-        }
+       }
     }
 
+    // not found
     return NULL;
 }
 
 static pipeline_actions ct_in(sk_buff_t *skb) {
-    struct per_cpu_ctx *ctx;
-    struct ct_session* ct;
-    struct rte_ipv4_hdr *iph;
-    struct tcphdr *tcp;
-    unsigned int direction, index, old_state, new_state;
+    struct per_lcore_ct_ctx *ctx;
+    struct ct_l4_proto *l4_handler;
 
-    ctx = get_per_cpu_ctx();
-    ct = ct_find(skb, ctx);
-    if (NULL == ct) {
+    struct ct_session *ct = ct_find(skb, &per_lcore_ctx);
+    if (unlikely(NULL == ct)) {
         ct = ct_new(skb);
         if (NULL == ct) {
-            RTE_LOG(ERR, EAL, "No memory, %s\n", __func__ );
+            RTE_LOG(ERR, CT, "%s: No memory.\n", __func__ );
             return PIPELINE_ACTION_DROP;
+        } else {
+            ct_ref(ct);
+            per_lcore_ctx.ct = ct;
+            per_lcore_ctx.tuple_hash = &ct->tuple_hash[CT_DRI_ORIGINAL];
+
+            // insert original ct
+            ct_ref(ct);
+            ct_insert_original(ct);
+
+            return PIPELINE_ACTION_NEXT;
         }
-        ctx->tuple_hash = &ct->tuple_hash[CT_DRI_ORIGINAL];
-        ct_ref(ct);
-        ctx->ct = ct;
-        return PIPELINE_ACTION_NEXT;
     }
 
+    // ct found
     ct_ref(ct);
-    ctx->ct = ct;
-
-    iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-    if (ctx->l4_proto == IPPROTO_TCP) {
-        direction = ctx->tuple_hash->tuple.dir;
-        if (direction == CT_DRI_REPLY) {
-            RTE_LOG(INFO, CT, "Reply ct hit\n");
-        }
-        tcp = (struct tcphdr*)&iph[1];
-        index = ct_get_tcp_index(tcp);
-        old_state = ct->state;
-        new_state = tcp_ct_state_transfer_map[direction][index][old_state];
-        if (old_state != new_state) {
-            RTE_LOG(INFO, CT, "CT state transfer, %s->%s\n", tcp_state_name[old_state], tcp_state_name[new_state]);
-        }
-        ct->state = new_state;
-        ct->timeout = tcp_timeouts[ct->state];
-        ct->real_timeout = get_jiffies() + ct->timeout;
-        ct_mod_timer(ct);
-    }
+    per_lcore_ctx.ct = ct;
+    ct_l4_handlers[per_lcore_ctx.l4_proto].pkt_in(skb, &per_lcore_ctx);
 
     return PIPELINE_ACTION_NEXT;
 }
 
 static pipeline_actions ct_confirm(sk_buff_t *skb) {
-    struct per_cpu_ctx *ctx;
+    if (per_lcore_ctx.ct->state == CT_NEW) {
+        ct_l4_handlers[per_lcore_ctx.l4_proto].pkt_new(skb, &per_lcore_ctx);
 
-    ctx = get_per_cpu_ctx();
-    if (ctx->ct->state != CT_NEW) {
-        return PIPELINE_ACTION_NEXT;
-    }
+        // insert reply
+        ct_insert_reply(per_lcore_ctx.ct);
 
-    ct_insert(ctx->ct);
-    if (ctx->l4_proto == IPPROTO_TCP) {
-        ctx->ct->state = TCP_CT_SYN_SEND;
-        ctx->ct->timeout = tcp_timeouts[ctx->ct->state];
-    } else if (ctx->l4_proto == IPPROTO_UDP) {
-        ctx->ct->state = UDP_CT_NORMAL;
-        ctx->ct->timeout = udp_timeouts[ctx->ct->state];
+        LOG_BUFF(buff);
+        RTE_LOG(INFO, CT, "Confirm CT(%s).\n", ct_to_str(per_lcore_ctx.ct, buff));
     }
-    ctx->ct->real_timeout = get_jiffies() + ctx->ct->timeout;
-    ct_mod_timer(ctx->ct);
-    RTE_LOG(INFO, CT, "Confirm ct\n");
+    per_lcore_ctx.ct->real_timeout = get_jiffies() + per_lcore_ctx.ct->timeout;
+    ct_mod_timer(per_lcore_ctx.ct);
 
     return PIPELINE_ACTION_NEXT;
 }
 
-void ct_module_init(void) {
-    int i;
-
-    for (i = 0; i < MAX_CT_BUCKETS; i++) {
-        INIT_LIST_HEAD(&ct_table[i]);
+static int ct_table_init_lcore(void *arg) {
+    for (int i = 0; i < MAX_CT_BUCKETS; i++) {
+        INIT_LIST_HEAD(&local_ct_tbl[i]);
     }
+    return NAT_LB_OK;
+}
+
+void ct_module_init(void) {
+    uint16_t lcore_id;
+
+    rte_eal_mp_remote_launch(ct_table_init_lcore, NULL, SKIP_MAIN);
+    RTE_LCORE_FOREACH_WORKER(lcore_id) {
+        if (rte_eal_wait_lcore(lcore_id) < 0) {
+            RTE_LOG(ERR, CT, "Init lcore %d ct table failed, %s.\n", lcore_id, rte_strerror(rte_errno));
+        }
+    }
+
+    ct_l4_handlers[IPPROTO_TCP] = tcp_l4_proto;
+    ct_l4_handlers[IPPROTO_UDP] = udp_l4_proto;
+    ct_l4_handlers[IPPROTO_ICMP] = icmp_l4_proto;
 
     pipeline_register("ct_in", ct_in, PIPELINE_PRIORITY_CT, NULL);
     pipeline_register("ct_confirm", ct_confirm, PIPELINE_PRIORITY_CONFIRM, NULL);

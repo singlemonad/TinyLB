@@ -59,13 +59,14 @@ pipeline_actions run_pipeline_for_skb(struct sk_buff *skb) {
         switch (action) {
             case PIPELINE_ACTION_NEXT:
                 continue;
-            case PIPELINE_ACTION_OUTPUT:
+            case PIPELINE_ACTION_FORWARD:
+            case PIPELINE_ACTION_LOCAL_IN:
             case PIPELINE_ACTION_DROP:
             case PIPELINE_ACTION_STOLEN:
                 break;
             default:
                 /* should never be here */
-                RTE_LOG(ERR, EAL, "unknown action(%d) returned by pipeline function"
+                RTE_LOG(ERR, EAL, "Unknown action(%d) returned by pipeline function"
                           "(priority %d), dropped\n", action, g_pipeline_entry_array[i].priority);
         }
         break;

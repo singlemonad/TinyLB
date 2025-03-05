@@ -21,7 +21,7 @@ static sa_t* sa_pool_new(void) {
     sa_t *sa;
     int i;
 
-    snat_addr = rte_malloc("snat addr", sizeof(snat_addr_t), RTE_CACHE_LINE_SIZE);
+    snat_addr = rte_malloc("original_snat addr", sizeof(snat_addr_t), RTE_CACHE_LINE_SIZE);
     if (NULL == snat_addr) {
         RTE_LOG(ERR, EAL, "No memory, %s", __func__ );
         return NULL;
@@ -94,7 +94,7 @@ static int snat_port_get(snat_addr_t *snat_addr, uint16_t *snat_port) {
                 if (((snat_addr->port_bit_map[port_idx]) & (1 << bit_idx)) == 0) {
                     snat_addr->port_bit_map[port_idx] |= (1 << bit_idx);
                     *snat_port = htons((port_idx * 8) + bit_idx + PORT_MIN);
-                    RTE_LOG(ERR, LB, "snat port %d\n", *snat_port);
+                    RTE_LOG(ERR, LB, "%s: Get snat port %d for original snat ip %s\n", __func__, rte_be_to_cpu_16(*snat_port), be_ip_to_str(snat_addr->snat_ip));
                     return NAT_LB_OK;
                 }
             }
