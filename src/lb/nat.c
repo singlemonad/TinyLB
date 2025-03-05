@@ -21,7 +21,7 @@ static uint16_t gen_ipv4_nat_checksum(uint32_t old_rev_val, uint32_t new_val, ui
 }
 
 static void rewrite_tcp_dst_port(struct rte_tcp_hdr *tcp, uint16_t new_port, uint32_t old_dst_ip, uint32_t new_dst_ip) {
-    uint16_t old_ports = (tcp->src_port << 16) | tcp->dst_port;
+    uint32_t old_ports = (tcp->src_port << 16) | tcp->dst_port;
     tcp->dst_port = new_port;
     uint32_t new_ports = (tcp->src_port << 16) | tcp->dst_port;
     tcp->cksum = gen_ipv4_nat_checksum(~old_dst_ip, new_dst_ip, tcp->cksum);
@@ -29,13 +29,12 @@ static void rewrite_tcp_dst_port(struct rte_tcp_hdr *tcp, uint16_t new_port, uin
 }
 
 static void rewrite_udp_dst_port(struct rte_udp_hdr *udp, uint16_t new_port, uint32_t old_dst_ip ,uint32_t new_dst_ip) {
-    uint16_t old_ports = (udp->src_port << 16) | udp->dst_port;
+    uint32_t old_ports = (udp->src_port << 16) | udp->dst_port;
     udp->dst_port = new_port;
     uint32_t new_ports = (udp->src_port << 16) | udp->dst_port;
     udp->dgram_cksum = gen_ipv4_nat_checksum(~old_dst_ip, new_dst_ip, udp->dgram_cksum);
     udp->dgram_cksum = gen_ipv4_nat_checksum(~old_ports, new_ports, udp->dgram_cksum);
 }
-
 
 int dnat(sk_buff_t *skb, void *arg) {
     struct rte_ipv4_hdr *iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
