@@ -13,7 +13,7 @@ typedef int(*rewrite_func)(struct sk_buff *skb, void *arg);
 enum rewrite_type {
     SNAT_REWRITE,
     DNAT_REWRITE,
-    INVALID_REWRITE,
+    MAX_REWRITE,
 };
 
 struct rewrite {

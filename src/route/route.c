@@ -5,13 +5,14 @@
 #define ROUTE_TABLE_BUCKETS 128
 #define MAX_ROUTES 4096
 #define NUMBER_TBL8 256
+#define DEFAULT_MTU 1500
 
 #include <rte_lpm.h>
 #include <rte_malloc.h>
+#include <stdlib.h>
 #include "../common/util.h"
 #include "../common/log.h"
 #include "../common/pipeline.h"
-#include "../common/thread.h"
 #include "route.h"
 
 extern __thread struct per_lcore_ct_ctx per_lcore_ctx;
@@ -36,7 +37,7 @@ int route_add(uint32_t dst_addr, uint16_t mask, unsigned long mtu, uint32_t gw,
 
     rt_entry = rte_zmalloc("route entry", sizeof(struct route_entry), RTE_CACHE_LINE_SIZE);
     if (NULL == rt_entry) {
-        RTE_LOG(ERR, ROUTE, "No memory, %s.\n", __func__ );
+        RTE_LOG(ERR, NAT_LB, "%s: no memory\n", __func__ );
         return NAT_LB_NOMEM;
     }
 
@@ -119,32 +120,31 @@ struct route_entry* route_egress_lockup(struct  flow4* fl) {
 }
 
 static pipeline_actions route_in(sk_buff_t *skb) {
-    struct flow4 fl4;
     struct rt_cache *rt;
-    struct rte_ipv4_hdr *iph;
-    struct route_entry *rt_entry;
     struct per_lcore_ct_ctx *ctx;
 
     ctx = &per_lcore_ctx;
     rt = ct_ext_data_get(CT_EXT_ROUTE, ctx->ct);
     if (NULL != rt->port) {
         return (rt->flags & RTF_FORWARD) ? PIPELINE_ACTION_FORWARD : PIPELINE_ACTION_LOCAL_IN;
-    }
-
-    iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
-    fl4.dst_addr = iph->dst_addr;
-    rt_entry = route_ingress_lockup(&fl4);
-    if (NULL == rt_entry) {
-        RTE_LOG(ERR, ROUTE, "No route to dst %s, drop it.\n", be_ip_to_str(fl4.dst_addr));
-        return PIPELINE_ACTION_DROP;
     } else {
-        rt->mtu = rt_entry->mtu;
-        rt->gw = rt_entry->gw;
-        rt->port = rt_entry->port;
-        rt->flags = rt_entry->flags;
-        return (rt->flags & RTF_FORWARD) ? PIPELINE_ACTION_FORWARD : PIPELINE_ACTION_LOCAL_IN;
+        rt->mtu = DEFAULT_MTU;
+        rt->gw = 0;
+        rt->port = get_port_by_id(skb->rcv_port);
+        rt->flags = RTF_FORWARD;
+        ctx->ct->ext_flags |= (1 << CT_EXT_ROUTE);
+        return PIPELINE_ACTION_FORWARD;
     }
 }
+
+struct ct_ext route_ct_ext = {
+        .type = CT_EXT_ROUTE,
+        .need_sync = false,
+        .length = sizeof(struct rt_cache),
+        .offset = 0,
+        .sync_ext_push_func = NULL,
+        .sync_ext_pop_func = NULL,
+};
 
 void route_module_init(int socket_id) {
     int i;
@@ -162,10 +162,10 @@ void route_module_init(int socket_id) {
 
     lpm_table = rte_lpm_create(name, socket_id, &lpm_cfg);
     if (NULL == lpm_table) {
-        rte_exit(EXIT_FAILURE, "Create route table in socket %d failed, %s.",
-                 socket_id, rte_strerror(rte_errno));
+        rte_exit(EXIT_FAILURE, "%s: create route table in socket %d failed, %s",
+                 __func__, socket_id, rte_strerror(rte_errno));
     }
 
-    ct_ext_register(CT_EXT_ROUTE, sizeof(struct rt_cache));
+    ct_ext_register(&route_ct_ext);
     pipeline_register("route_in", route_in, PIPELINE_PRIORITY_ROUTE, NULL);
 }

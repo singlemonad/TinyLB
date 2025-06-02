@@ -1,0 +1,88 @@
+[[port]]
+local_ip = "172.16.0.2"
+rxq_n = 1
+rx_desc_n = 1024
+txq_n = 1
+tx_desc_n = 1024
+mtu = 1500
+
+[[rs]]
+vip = "192.168.0.6"
+vport = 8080
+proto = 17
+pip = "172.16.0.17"
+pport = 80
+weight = 16
+
+[[rs]]
+vip = "192.168.0.6"
+vport = 8080
+proto = 17
+pip = "172.16.0.17"
+pport = 81
+weight = 16
+
+[[rs]]
+vip = "192.168.0.6"
+vport = 8080
+proto = 17
+pip = "172.16.0.17"
+pport = 82
+weight = 10
+
+[[rs]]
+vip = "192.168.0.6"
+vport = 8080
+proto = 17
+pip = "172.16.0.17"
+pport = 83
+weight = 10
+
+[[snat]]
+lcore_id = 1
+snat_ip = "172.16.0.3"
+
+[[lcore]]
+lcore_id = 0
+lcore_type = 1 # rx
+
+[[lcore]]
+lcore_id = 1
+lcore_type = 2 # worker
+
+[[lcore]]
+lcore_id = 2
+lcore_type = 3 # session sync
+
+[[lcore]]
+lcore_id = 3
+lcore_type = 4 # keepalive
+
+[[acl]]
+direction = 1 # ingress
+proto = 1 # icmp
+src_addr = "169.254.0.0"
+src_mask = 16
+dst_addr = "0.0.0.0"
+dst_mask = 0
+action = 1 # accept
+
+[[session_sync]]
+src_ip = "172.16.0.8"
+dst_ip = "172.16.0.17" # 测试ip
+src_port = 9000
+dst_port = 9000
+
+[[ha]]
+src_ip = "172.16.0.9"
+src_port_base = 6000
+lcore_id = 3
+
+# ip分配
+# rsIp 172.16.0.17 位于一张独立网卡
+# 以下三个ip为辅助网卡的辅助ip
+# 辅助网卡的主ip为172.16.0.2
+# snatIp 172.16.0.3
+# sessionSyncSrcIp 172.16.0.8
+# keepaliveSrcIp 172.16.0.9
+# 需要配置路由，将目的ip为sessionSyncSrcIp和keepalieSrcIp的流量上送到本地

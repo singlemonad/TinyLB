@@ -16,6 +16,8 @@ struct l4_handler {
 };
 
 void ipv4_init(void);
+void ipv4_init_static_route(void);
+int ipv4_rcv(sk_buff_t *skb);
 int ipv4_local_out(sk_buff_t *skb, struct flow4 *fl4);
 int ipv4_output(sk_buff_t *skb, struct rt_cache *rt);
 int inet_register_l4_handler(struct l4_handler *handler, unsigned char protocol);

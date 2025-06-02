@@ -2,6 +2,8 @@
 // Created by tedqu on 25-3-4.
 //
 
+#include <rte_ip.h>
+#include "../common/log.h"
 #include "../common/util.h"
 #include "nat.h"
 
@@ -42,8 +44,6 @@ int dnat(sk_buff_t *skb, void *arg) {
 
     struct dnat_rewrite_data *data = (struct dnat_rewrite_data*)(arg);
     iph->dst_addr = data->dst_ip;
-    iph->hdr_checksum = 0;
-    iph->hdr_checksum = rte_ipv4_cksum(iph);
 
     if (iph->next_proto_id == IPPROTO_TCP) {
         rewrite_tcp_dst_port((struct rte_tcp_hdr*)&iph[1], data->port, old_dst_ip, iph->dst_addr);
@@ -55,10 +55,10 @@ int dnat(sk_buff_t *skb, void *arg) {
 }
 
 static void rewrite_tcp_src_port(struct rte_tcp_hdr *tcp, uint16_t new_port, uint32_t old_src_ip, uint32_t new_src_ip) {
+    tcp->cksum = gen_ipv4_nat_checksum(~old_src_ip, new_src_ip, tcp->cksum);
     uint32_t old_ports = (tcp->src_port << 16) | tcp->dst_port;
     tcp->src_port = new_port;
     uint32_t new_ports = (tcp->src_port << 16) | tcp->dst_port;
-    tcp->cksum = gen_ipv4_nat_checksum(~old_src_ip, new_src_ip, tcp->cksum);
     tcp->cksum = gen_ipv4_nat_checksum(~old_ports, new_ports, tcp->cksum);
 }
 
@@ -76,8 +76,6 @@ int snat(sk_buff_t *skb, void *arg) {
 
     struct snat_rewrite_data *data = (struct snat_rewrite_data*)(arg);
     iph->src_addr = data->src_ip;
-    iph->hdr_checksum = 0;
-    iph->hdr_checksum = rte_ipv4_cksum(iph);
 
     if (IPPROTO_TCP == iph->next_proto_id) {
         rewrite_tcp_src_port((struct rte_tcp_hdr*)&iph[1], data->port, old_sip, iph->src_addr);

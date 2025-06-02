@@ -1,0 +1,1 @@
+protoc -I=. --c_out=. ./msg.proto

@@ -32,7 +32,7 @@ struct neighbor {
     enum neighbor_state state;
 };
 
-void neigh_init(void);
+void neigh_module_init(void);
 int neighbor_add(uint32_t next_hop, struct rte_ether_addr *mac);
 int neighbor_del(uint32_t next_hop);
 int neigh_output(uint32_t next_hop, sk_buff_t *skb, struct dev_port *port);

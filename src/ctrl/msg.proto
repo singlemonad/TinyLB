@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+message neighbor {
+    uint32 dst_ip=1;
+    bytes mac=2;
+};

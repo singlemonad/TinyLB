@@ -4,43 +4,59 @@
 
 #include <rte_mbuf.h>
 #include <rte_mbuf_core.h>
+#include <rte_malloc.h>
 #include <rte_arp.h>
 #include <linux/if_ether.h>
 #include "../common/util.h"
 #include "arp.h"
 #include "neigh.h"
 #include "../common/log.h"
-#include "../common/inet.h"
+#include "../inet/inet.h"
 
 static int arp_rcv(sk_buff_t *skb) {
+    int ret = NAT_LB_OK;
     struct rte_arp_hdr *arp = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_arp_hdr*);
 
     if (arp->arp_opcode != ntohs(RTE_ARP_OP_REPLY)) {
+        rte_pktmbuf_free((struct rte_mbuf*)skb);
         return NAT_LB_OK;
     }
+
+    RTE_LOG(DEBUG, NAT_LB, "%s: lcore %d rcv arp pkt\n", __func__, rte_lcore_id());
 
     uint32_t arp_sip = ntohl(arp->arp_data.arp_sip);
     struct neighbor *neighbor = neighbor_lookup(arp_sip);
     if (NULL != neighbor) {
-        rte_ether_addr_copy(&arp->arp_data.arp_sha, &neighbor->mac);
         neighbor->state = NEIGHBOR_VALID;
+        rte_ether_addr_copy(&arp->arp_data.arp_sha, &neighbor->mac);
 
         struct neigh_mbuf *neigh_mbuf;
         list_for_each_entry(neigh_mbuf, &neighbor->wait_pkt, neigh_mbuf_node) {
+            RTE_LOG(DEBUG, NAT_LB, "%s: send wait skb, addr=%p,mbuf.data_len=%d\n", __func__, neigh_mbuf->skb, neigh_mbuf->skb->mbuf.data_len);
             struct dev_port *port = get_port_by_id(skb->mbuf.port);
             neigh_fill_mac(neigh_mbuf->skb, neighbor, port);
             dev_port_xmit(port, neigh_mbuf->skb);
         }
-        return NAT_LB_OK;
+
+        struct list_head *wait_pkt_head = &neighbor->wait_pkt;
+        struct list_head *curr = wait_pkt_head->next;
+        while (curr != wait_pkt_head) {
+            struct list_head *next = curr->next;
+            list_del(curr);
+            rte_free(container_of(curr, struct neigh_mbuf, neigh_mbuf_node));
+            curr = next;
+            RTE_LOG(DEBUG, NAT_LB, "%s: free arp wait pkt\n", __func__);
+        }
+
     } else {
-        int ret = neighbor_add(arp_sip, &arp->arp_data.arp_sha);
+        ret = neighbor_add(arp_sip, &arp->arp_data.arp_sha);
         if (NAT_LB_OK != ret) {
-            RTE_LOG(ERR, IP, "Neighbor add failed.\n");
-            return ret;
+            RTE_LOG(ERR, NAT_LB, "%s: neighbor add failed\n");
         }
     }
 
-    return NAT_LB_OK;
+    rte_pktmbuf_free((struct rte_mbuf*)skb);
+    return ret;
 }
 
 int arp_send(struct dev_port *port, uint32_t src_ip, uint32_t dst_ip) {
@@ -63,7 +79,7 @@ int arp_send(struct dev_port *port, uint32_t src_ip, uint32_t dst_ip) {
 
     memset(arp, 0, sizeof(struct rte_arp_hdr));
     rte_ether_addr_copy(&port->mac, &arp->arp_data.arp_sha);
-    arp->arp_data.arp_sip = rte_cpu_to_be_32(src_ip);
+    arp->arp_data.arp_sip = src_ip;
     memset(&arp->arp_data.arp_tha, 0xFF, 6);
     arp->arp_data.arp_tip = rte_cpu_to_be_32(dst_ip);
     arp->arp_hardware = htons(RTE_ARP_HRD_ETHER);

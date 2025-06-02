@@ -7,19 +7,6 @@
 #include "../common/log.h"
 #include "ct.h"
 
-enum ct_tcp_state {
-    TCP_CT_NONE = CT_NEW,
-    TCP_CT_SYN_SEND = 1,
-    TCP_CT_SYN_RCV = 2,
-    TCP_CT_ESTABLISHED = 3,
-    TCP_CT_FIN_WAIT = 4,
-    TCP_CT_CLOSE_WAIT = 5,
-    TCP_CT_LAST_ACK = 6,
-    TCP_CT_TIME_WAIT = 7,
-    TCP_CT_CLOSE = 8,
-    TCP_CT_SYN_SEND2 = 9,
-    TCP_CT_MAX = 10,
-};
 
 enum tcp_bit_set {
     TCP_SYN_SET = 0,
@@ -47,11 +34,11 @@ static unsigned int tcp_timeouts[TCP_CT_MAX] = {
         [TCP_CT_NONE]		= 0 SECS,
         [TCP_CT_SYN_SEND]	= 60 SECS,
         [TCP_CT_SYN_RCV]	= 60 SECS,
-        [TCP_CT_ESTABLISHED]	= 3 HOURS,
-        [TCP_CT_FIN_WAIT]	= 2 MINUTES,
+        [TCP_CT_ESTABLISHED]	= 3 * 60 * 60 SECS,
+        [TCP_CT_FIN_WAIT]	= 2 * 60 SECS,
         [TCP_CT_CLOSE_WAIT]	= 60 SECS,
         [TCP_CT_LAST_ACK]	= 30 SECS,
-        [TCP_CT_TIME_WAIT]	= 2 MINUTES,
+        [TCP_CT_TIME_WAIT]	= 2 * 60 SECS,
         [TCP_CT_CLOSE]		= 10 SECS,
         [TCP_CT_SYN_SEND2]	= 60 SECS,
 };
@@ -92,17 +79,17 @@ static const char *tcp_state_name[] = {
         [sS2] = "SYN_SENT2",
 };
 
-static unsigned int ct_get_tcp_index(struct tcphdr *tcp) {
-    if (tcp->rst) {
+static inline unsigned int ct_get_tcp_index(struct tcphdr *tcp) {
+    if (unlikely(tcp->rst)) {
         return TCP_RST_SET;
     }
-    if (tcp->syn) {
+    if (unlikely(tcp->syn)) {
         if (tcp->ack) {
             return TCP_SYNACK_SET;
         }
         return TCP_SYN_SET;
     }
-    if (tcp->fin) {
+    if (unlikely(tcp->fin)) {
         return TCP_FIN_SET;
     }
     if (tcp->ack) {
@@ -111,12 +98,11 @@ static unsigned int ct_get_tcp_index(struct tcphdr *tcp) {
     return TCP_NONE_SET;
 }
 
-static struct ct_tuple tcp_gen_tuple(struct sk_buff *skb, bool reverse) {
-    struct rte_ipv4_hdr *iph;
-    struct ct_tuple tuple;
+static inline struct ct_tuple tcp_gen_tuple(struct sk_buff *skb, bool reverse) {
     uint16_t *ports;
+    struct ct_tuple tuple;
 
-    iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+    struct rte_ipv4_hdr *iph = (struct rte_ipv4_hdr*)skb->iph;
     tuple.proto = IPPROTO_TCP;
     if (!reverse) {
         tuple.src_addr = iph->src_addr;
@@ -134,7 +120,7 @@ static struct ct_tuple tcp_gen_tuple(struct sk_buff *skb, bool reverse) {
     return tuple;
 }
 
-static bool is_tcp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) {
+static inline bool is_tcp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) {
     if (lhs->tuple.ports.src_port == rhs->ports.src_port &&
         lhs->tuple.ports.dst_port == rhs->ports.dst_port) {
         return true;
@@ -142,25 +128,32 @@ static bool is_tcp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) 
     return false;
 }
 
-static int tcp_pkt_in(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
-    struct rte_ipv4_hdr *iph = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_ipv4_hdr*);
+static inline int tcp_pkt_in(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
+    if (unlikely(ctx->ct->state == CT_NEW)) {
+        // tcp正向首包不触发状态机改变
+        return NAT_LB_OK;
+    }
+
+    struct rte_ipv4_hdr *iph = (struct rte_ipv4_hdr*)skb->iph;
     unsigned int index = ct_get_tcp_index((struct tcphdr*)&iph[1]);
     unsigned int new_state = tcp_ct_state_transfer_map[ctx->tuple_hash->tuple.dir][index][ctx->ct->state];
-    if (ctx->ct->state != new_state) {
-        LOG_BUFF(buff);
-        RTE_LOG(INFO, CT, "State transfer %s->%s, CT(%s).\n", tcp_state_name[ctx->ct->state], tcp_state_name[new_state], ct_to_str(ctx->ct, buff));
+    if (unlikely(ctx->ct->state != new_state)) {
+        // LOG_BUFF(buff);
+        // RTE_LOG(INFO, NAT_LB, "%s: tcp state transfer %s->%s, ct(%s)\n", __func__, tcp_state_name[ctx->ct->state], tcp_state_name[new_state], ct_to_str(ctx->ct, buff));
+
+        ctx->ct->state = new_state;
+        ctx->ct->timeout = tcp_timeouts[ctx->ct->state];
     }
-    ctx->ct->state = new_state;
-    ctx->ct->timeout = tcp_timeouts[ctx->ct->state];
     return NAT_LB_OK;
 }
 
-static int tcp_pkt_new(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
+static inline int tcp_pkt_new(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
     if (ctx->ct->state == CT_NEW) {
         LOG_BUFF(buff);
-        RTE_LOG(INFO, CT, "State transfer %s->%s, CT(%s).\n", tcp_state_name[ctx->ct->state], tcp_state_name[TCP_CT_SYN_SEND], ct_to_str(ctx->ct, buff));
+        //RTE_LOG(INFO, NAT_LB, "%s: tcp state transfer %s->%s, ct(%s)\n", __func__, tcp_state_name[ctx->ct->state], tcp_state_name[TCP_CT_SYN_SEND], ct_to_str(ctx->ct, buff));
 
         ctx->ct->state = TCP_CT_SYN_SEND;
+        ctx->ct->timeout = tcp_timeouts[TCP_CT_SYN_SEND];
     }
     return NAT_LB_OK;
 }

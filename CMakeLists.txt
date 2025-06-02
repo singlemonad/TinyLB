@@ -113,6 +113,7 @@ set(DPDKLIBS
         rte_table
         rte_timer
         rte_vhost
+        rte_rcu
         -Wl,--no-whole-archive)
 
 add_definitions(
@@ -136,11 +137,9 @@ add_definitions(
 add_compile_options(${CFLAGS})
 
 include_directories(/usr/local/include)
-include_directories(
-        ./include
-)
 
 link_directories(/usr/local/lib64)
+link_directories(/usr/local/lib)
 
 link_libraries(
         ${DPDKLIBS}
@@ -148,36 +147,37 @@ link_libraries(
         rt
         dl
         m
-        pcap)
+        pcap
+        protobuf-c
+        toml
+)
 
 add_executable(nat-lb main.c
         src/acl/acl.c
         src/acl/acl.h
-        src/common/inet.c
-        src/common/inet.c
-        src/common/jiffies.h
-        src/common/jiffies.c
+        src/inet/inet.c
+        src/inet/inet.c
         src/common/list.h
         src/common/log.h
         src/common/pipeline.h
         src/common/pipeline.c
         src/common/skb.h
-        src/common/thread.h
-        src/common/thread.c
+        src/common/lcore.h
+        src/common/lcore.c
         src/common/util.c
         src/common/util.h
         src/ct/ct.c
         src/ct/ct.h
-        src/ct/flow.h
+        src/inet/flow.h
         src/ct/proto_tcp.c
         src/ct/proto_icmp.c
         src/ct/proto_udp.c
         src/dev/dev.h
         src/dev/dev.c
-        src/icmp/icmp.h
-        src/icmp/icmp.c
-        src/ipv4/ipv4.c
-        src/ipv4/ipv4.h
+        src/inet/icmp.h
+        src/inet/icmp.c
+        src/inet/ipv4.c
+        src/inet/ipv4.h
         src/lb/lb.h
         src/lb/lb.c
         src/lb/nat.h
@@ -192,5 +192,27 @@ add_executable(nat-lb main.c
         src/neigh/neigh.c
         src/route/route.h
         src/route/route.c
+        src/inet/gre.h
+        src/inet/gre.c
+        src/ctrl/ctrl.c
+        src/ctrl/ctrl.h
+        src/ctrl/msg.pb-c.h
+        src/ctrl/msg.pb-c.c
+        src/sync/sync.h
+        src/sync/sync.c
+        src/inet/udp.h
+        src/inet/udp.c
+        src/ha/ha.h
+        src/ha/ha.c
+        src/inet/tcp.h
+        src/inet/tcp.c
+        src/common/ip_group.h
+        src/common/ip_group.c
+        src/common/conf.h
+        src/common/conf.c
+        src/common/const.h
+        src/lb/schedule.h
+        src/lb/schedule.c
+        src/lb/wrr_scheduler.c
 )
 

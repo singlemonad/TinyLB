@@ -59,10 +59,11 @@ struct dev_port {
 
 int dev_add_port_configure(struct port_conf *conf);
 
-void dev_port_init(void);
+void dev_port_module_init(uint16_t port_n);
 void dev_port_start(uint16_t port_id);
 struct dev_port* get_port_by_id(unsigned int port_id);
 uint16_t dev_port_rx_burst(uint16_t port_id, uint16_t queue_id, struct sk_buff **mbufs);
 int dev_port_xmit(struct dev_port *port, struct sk_buff *skb);
+void dev_port_configure_port(uint16_t port_n);
 
 #endif //NAT_LB_DEV_H

@@ -1,0 +1,66 @@
+// 服务器IP地址划分
+//  一台LB有三种类型IP，分别为业务IP、管理IP、SnatIp
+//  业务IP用于client->lb->rs业务流量及回程业务流量
+//  管理IP用于会话同步、健康检查流量
+//  SnatIp用于做Snat
+//  流量从网卡进入服务器后，会按照IP类型来分流
+//  目的IP为业务IP的流量为original方向业务流量，派发至业务模块
+//  目的IP为管理IP的流量，根据4层协议类型及目的端口，派发至健康检查模块或会话同步模块
+//  目的IP为SnatIp的流量为reply方向业务流量，派发至业务模块
+
+// 服务器核划分
+//  一个线程用于接收及分流
+//  两个线程用于处理业务流量，业务流量处理后直接从该线程发出
+//  一个线程用于控制器
+//  一个线程用于会话同步、健康检查
+
+// 配置项
+//  1. svcIp+svcPort -> [rsIp+rsPort]
+//  2. vpcId+vip+vport -> ACL
+//  3. vpcId+vip+vport -> 安全组
+//  4. dstIp -> 路由信息
+
+// 业务流量分流策略
+//  original方向根据内层五元组分流，在做snat时，不同的业务核划分的snatIp不一样，reply方向根据snatIp分流
+
+// GRE协议格式
+// 0   1   2   3   4   5         8      13     16         31
+// | C | R | K | S | s | 递归控制 | 标志位 | 版本 | 协议类型   |
+// |              校验和（可选）                 | 偏离（可选）|
+// |                  秘钥（可选）                           |
+// |                  序号（可选）                           |
+// |                  路由（可选）                           |
+// C：表示校验和+序号字段是否存在
+// R：表示路由字段是否存在
+// K：表示秘钥字段是否存在
+// S：表示序号字段是否存在
+// s：严格源路由标志位
+// 递归控制：需置0
+// 标志位：需置0
+// 版本：需置0
+// 协议类型：内层协议类型，如IP协议
+//
+// 客户端发出来的包，经过ebpf劫持后，会将原始ip包封装在gre报文里，然后通过hash算法
+// 选择lb集群的ip作为外层目的ip，在gre头部前加上ip头部后发出
+// 其中秘钥字段存放用户的vpcId
+// lb收到客户端发过来的ip包，外层源目为clientIp->lbIp，gre头部秘钥字段为用户vpcId，内层源目为clientIp->svcIp
+// lb去掉外层ip头，从gre头部获取客户端vpcId，通过vpcId+svcIp+port选择调度的rs，修改内层目的ip为rsIp，做snat后发出
+// rs收到包后，正常处理后回包
+// 通信流程
+// original方向
+//         内层源IP 内层目的IP GRE                     外层源IP 外层目的IP
+// client   vmIp     svcIp   No（发出的为非gre包）         No      No
+// ebpf     vmIp     svcIp   seq=vpcId                  vmIp    lbIp
+// lb       snatIp   rsIp    No（发出的为非gre包）         No      No
+// rs       snatIp   rsIp    No（接收的为非gre包）         No      No
+// reply方向
+// rs       rsIp     snatIp
+// lb       svcIp    vmIp
+// ebpf
+// client   svcIp    vmIp
+// 网络架构
+// 1. 需要划分出一个保留网段，用于lbIp，client端需要将vpc和lb vpc打通
+//    client出向流量被ebpf封装完gre后，外层ip为lbIp，可以通过云上peer vpc打通
+// 2. 需要保留lb上的一组辅助ip作为snatIp
+// 3. rs位于lb所在的vpc，没法支持rs位于用户vpc的场景，因为从lb发出的包的目的ip没法重叠
+

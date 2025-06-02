@@ -15,6 +15,9 @@ extern "C" {
 #define ACL_ACCEPT 1
 #define ACL_DROP 2
 
+#define INGRESS 1
+#define EGRESS 2
+
 struct acl_ipv4_rule;
 
 struct ipv4_3tuple {

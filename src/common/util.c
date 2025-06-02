@@ -25,6 +25,18 @@ char* protocol_to_str(uint8_t proto) {
     }
 }
 
+uint32_t ip_to_int(char *addr) {
+    struct in_addr s;
+    inet_pton(AF_INET, addr, (void *)&s);
+    return rte_be_to_cpu_32(s.s_addr);
+}
+
+uint32_t ip_to_int_be(char *addr) {
+    struct in_addr s;
+    inet_pton(AF_INET, addr, (void *)&s);
+    return s.s_addr;
+}
+
 char* ip_to_str(uint32_t ip) {
     struct in_addr addr = {
             .s_addr = rte_be_to_cpu_32(ip),
@@ -45,7 +57,7 @@ uint32_t be_ip_to_int(char *str) {
     return rte_be_to_cpu_32(s.s_addr);
 }
 
-static void print_mac(struct rte_ether_addr *addr) {
+void print_mac(struct rte_ether_addr *addr) {
     fprintf(stdout,  "%02" PRIx8 " %02" PRIx8 " %02" PRIx8" %02" PRIx8 " %02" PRIx8 " %02" PRIx8,
             RTE_ETHER_ADDR_BYTES(addr));
 }
@@ -113,5 +125,30 @@ void print_pkt(sk_buff_t *pkt) {
     } else if (htons(RTE_ETHER_TYPE_ARP) == eth_hdr->ether_type) {
         arp = (struct rte_arp_hdr *)(eth_hdr + 1);
         print_arp_pkt(eth_hdr, arp);
+    } else {
+        fprintf(stdout, "invalid pkt, ether_type=%d\n", ntohs(eth_hdr->ether_type));
+    }
+}
+
+static int hex_to_num(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+void hex_str_to_mac(char *dst, char *src) {
+    int i = 0;
+    while (i < 6) {
+        if(' ' == *src || ':'== *src || '"' == *src || '\'' == *src) {
+            src++;
+            continue;
+        }
+        *(dst + i) = (hex_to_num(*src) << 4) | hex_to_num(*(src + 1));
+        i++;
+        src += 2;
     }
 }

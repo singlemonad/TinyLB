@@ -6,7 +6,7 @@
 #define NAT_LB_ROUTE_H
 
 #include "../common/list.h"
-#include "../ct/flow.h"
+#include "../inet/flow.h"
 #include "../dev/dev.h"
 
 #ifdef __cplusplus

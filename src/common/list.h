@@ -15,14 +15,6 @@ struct list_head {
     struct list_head *next, *prev;
 };
 
-struct h_list_node {
-    struct h_list_node *next, **prev;
-};
-
-struct h_list_head {
-    struct h_list_node *first;
-};
-
 #define LIST_HEAD_INIT(name) {&{name}, &{name}}
 
 #undef LIST_HEAD
@@ -34,32 +26,28 @@ static void INIT_LIST_HEAD(struct list_head* list) {
     list->next = list;
 }
 
-static void __list_add(struct list_head *node, struct list_head *prev, struct list_head *next) {
-    next->prev = node;
+static void list_add_rcu(struct list_head *node, struct list_head *prev, struct list_head *next) {
     node->prev = prev;
-    prev->next = node;
     node->next = next;
+    prev->next = node;
+    next->prev = node;
 }
 
 static void list_add(struct list_head *node, struct list_head* head) {
-    __list_add(node, head, head->next);
+    list_add_rcu(node, head, head->next);
 }
 
-static void list_add_tail(struct list_head *node, struct list_head* head) {
-    __list_add(node, head->prev, head);
-}
-
-static void __list_del(struct list_head *prev, struct list_head *next) {
+static void list_del_rcu(struct list_head *prev, struct list_head *next) {
     prev->next = next;
     next->prev = prev;
 }
 
-static void __list_del_entry(struct list_head *entry) {
-    __list_del(entry->prev, entry->next);
+static void list_del_entry(struct list_head *entry) {
+    list_del_rcu(entry->prev, entry->next);
 }
 
 static void list_del(struct list_head *entry) {
-    __list_del_entry(entry);
+    list_del_entry(entry);
     entry->prev = NULL;
     entry->next = NULL;
 }
@@ -94,5 +82,11 @@ static int list_elems(struct list_head *head) {
     for(pos = list_first_entry(head, typeof(*pos), member); \
         &pos->member != head;   \
         pos = list_next_entry(pos, member))
+
+#define list_for_each_entry_continue(pos, head, member) \
+    for(pos = list_entry(pos->member.next, typeof(*pos), member); \
+        &pos->member != head;   \
+        pos = list_next_entry(pos, member))
+
 
 #endif //NAT_LB_LIST_H

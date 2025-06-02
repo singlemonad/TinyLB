@@ -15,7 +15,7 @@ static unsigned int icmp_timeouts[ICMP_CT_MAX] = {
         [ICMP_CT_ESTABLISHED]		= 30 SECS,
 };
 
-static struct ct_tuple icmp_gen_tuple(struct sk_buff *skb, bool reverse) {
+static inline struct ct_tuple icmp_gen_tuple(struct sk_buff *skb, bool reverse) {
     struct rte_ipv4_hdr *iph;
     struct rte_icmp_hdr *icmp;
     struct ct_tuple tuple;
@@ -38,7 +38,7 @@ static struct ct_tuple icmp_gen_tuple(struct sk_buff *skb, bool reverse) {
     return tuple;
 }
 
-static bool is_icmp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) {
+static inline bool is_icmp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) {
     if (lhs->tuple.icmp.type == rhs->icmp.type &&
         lhs->tuple.icmp.code == rhs->icmp.code) {
         return true;
@@ -46,17 +46,14 @@ static bool is_icmp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs)
     return false;
 }
 
-static int icmp_pkt_in(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
-    if (ctx->tuple_hash->tuple.dir == CT_DRI_REPLY) {
-        ctx->ct->state = ICMP_CT_ESTABLISHED;
-        ctx->ct->timeout = icmp_timeouts[ctx->ct->state];
-    }
+static inline int icmp_pkt_in(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
     return NAT_LB_OK;
 }
 
-static int icmp_pkt_new(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
+static inline int icmp_pkt_new(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
     if (ctx->ct->state == CT_NEW) {
         ctx->ct->state = ICMP_CT_ESTABLISHED;
+        ctx->ct->timeout = icmp_timeouts[ICMP_CT_ESTABLISHED];
     }
     return NAT_LB_OK;
 }

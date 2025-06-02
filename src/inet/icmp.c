@@ -6,11 +6,10 @@
 #include <netinet/ip_icmp.h>
 #include <rte_ip.h>
 #include <rte_icmp.h>
-#include "icmp.h"
 #include "../common/util.h"
-#include "../ipv4/ipv4.h"
-
-#define MAX_ICMP_CTRL
+#include "../common/log.h"
+#include "ipv4.h"
+#include "icmp.h"
 
 struct icmp_handler {
     int (*handler)(sk_buff_t *skb, struct rte_ipv4_hdr *iph);
@@ -35,7 +34,7 @@ static int icmp_echo(sk_buff_t *skb, struct rte_ipv4_hdr *iph) {
     return ipv4_local_out(skb, &fl4);
 }
 
-static struct icmp_handler icmp_ctrl[MAX_ICMP_CTRL] = {
+static struct icmp_handler icmp_ctrl[NR_ICMP_TYPES] = {
         [ICMP_ECHO] = {
             .handler = icmp_echo
         }
@@ -44,18 +43,17 @@ static struct icmp_handler icmp_ctrl[MAX_ICMP_CTRL] = {
 static int icmp_rcv(sk_buff_t *skb, struct rte_ipv4_hdr *iph) {
     struct rte_icmp_hdr *ich;
     unsigned char icmp_type;
-    struct icmp_handler *handler;
 
     ich = rte_pktmbuf_mtod((struct rte_mbuf*)skb, struct rte_icmp_hdr*);
 
     icmp_type = ich->icmp_type;
-    handler = &icmp_ctrl[icmp_type];
-    if (NULL == handler) {
+    if (icmp_type != ICMP_ECHO) {
         goto drop;
     }
-    return handler->handler(skb, iph);
+    return icmp_ctrl[icmp_type].handler(skb, iph);
 
 drop:
+    RTE_LOG(ERR, NAT_LB, "%s: not support icmp, type=%d,code=%d\n", __func__, ich->icmp_type, ich->icmp_code);
     rte_pktmbuf_free((struct rte_mbuf*)skb);
 
     return NAT_LB_OK;

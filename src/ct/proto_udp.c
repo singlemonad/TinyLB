@@ -49,16 +49,13 @@ static bool is_udp_tuple_equal(struct ct_tuple_hash *lhs, struct ct_tuple *rhs) 
 }
 
 static int udp_pkt_in(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
-    if (ctx->tuple_hash->tuple.dir == CT_DRI_REPLY) {
-        ctx->ct->state = UDP_CT_ESTABLISHED;
-    }
-    ctx->ct->timeout = udp_timeouts[ctx->ct->state];
     return NAT_LB_OK;
 }
 
 static int udp_pkt_new(struct sk_buff *skb, struct per_lcore_ct_ctx *ctx) {
     if (ctx->ct->state == CT_NEW) {
         ctx->ct->state = UDP_CT_ESTABLISHED;
+        ctx->ct->timeout = udp_timeouts[UDP_CT_ESTABLISHED];
     }
     return NAT_LB_OK;
 }
